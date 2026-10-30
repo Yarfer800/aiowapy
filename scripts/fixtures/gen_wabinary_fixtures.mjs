@@ -3,6 +3,7 @@
 // Результат (tests/fixtures/wabinary/nodes.json) коммитится; в CI Node не нужен.
 import { writeFileSync } from 'node:fs'
 import { encodeBinaryNode } from '@whiskeysockets/baileys/lib/WABinary/encode.js'
+import { decodeBinaryNode } from '@whiskeysockets/baileys/lib/WABinary/decode.js'
 
 const B = (buffer) => ({ $binary: buffer.toString('base64') })
 const bin = (text) => Buffer.from(text)
@@ -85,11 +86,16 @@ const toJson = (value) => {
   return node
 }
 
-const fixtures = cases.map(({ name, node }) => ({
-  name,
-  node: toJson(node),
-  hex: encodeBinaryNode(node).toString('hex'),
-}))
+const fixtures = []
+for (const { name, node } of cases) {
+  const encoded = encodeBinaryNode(node)
+  fixtures.push({
+    name,
+    node: toJson(node),
+    hex: encoded.toString('hex'),
+    decoded: toJson(await decodeBinaryNode(encoded)),
+  })
+}
 
 writeFileSync(
   new URL('../../tests/fixtures/wabinary/nodes.json', import.meta.url),
