@@ -15,6 +15,7 @@ venv/
 .mypy_cache/
 .coverage
 htmlcov/
+node_modules/
 
 # Secrets / runtime artifacts
 *.session
