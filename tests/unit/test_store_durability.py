@@ -1,4 +1,4 @@
-"""Гарантии из раздела 5 спецификации: коммит до возврата, атомарность, один писатель."""
+"""Guarantees from spec section 5: commit before return, atomicity, single writer."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ ALICE = "491111111111.0:0@s.whatsapp.net"
 
 
 async def test_put_session_is_committed_before_return(tmp_path: Path) -> None:
-    """Правило write-ahead: после возврата запись видна стороннему соединению."""
+    """Write-ahead rule: once the call returns, another connection sees the write."""
     path = tmp_path / "bot.session"
     store = SessionStore(path)
     await store.open()
@@ -70,7 +70,7 @@ async def test_consume_prekey_is_atomic_under_concurrency(tmp_path: Path) -> Non
 
 
 async def test_second_client_can_open_same_file(tmp_path: Path) -> None:
-    """WAL позволяет другому соединению открыть файл; данные читаются."""
+    """WAL lets another connection open the same file and read the data."""
     path = tmp_path / "bot.session"
     first = SessionStore(path)
     await first.open()

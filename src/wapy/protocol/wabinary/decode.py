@@ -1,4 +1,4 @@
-"""Декодировщик узлов WABinary."""
+"""WABinary node decoder."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from wapy.protocol.wabinary.node import Node
 
 
 class DecodeError(WapyError):
-    """Кадр невозможно разобрать."""
+    """Frame cannot be decoded."""
 
 
 def _unpack(tag: int, value: int) -> str:
@@ -24,22 +24,22 @@ def _unpack(tag: int, value: int) -> str:
             return "."
         if value == 15:
             return "\x00"
-        raise DecodeError(f"недопустимая тетрада: {value}")
+        raise DecodeError(f"invalid nibble: {value}")
     if tag == tokens.HEX_8:
         if 0 <= value <= 9:
             return chr(ord("0") + value)
         if 10 <= value <= 15:
             return chr(ord("A") + value - 10)
-        raise DecodeError(f"недопустимая hex-цифра: {value}")
-    raise DecodeError(f"недопустимый тег упаковки: {tag}")
+        raise DecodeError(f"invalid hex digit: {value}")
+    raise DecodeError(f"invalid packing tag: {tag}")
 
 
 def _double_token(dictionary: int, index: int) -> str:
     if dictionary >= len(tokens.DOUBLE_BYTE_TOKENS):
-        raise DecodeError(f"недопустимый словарь: {dictionary}")
+        raise DecodeError(f"invalid token dictionary: {dictionary}")
     entries = tokens.DOUBLE_BYTE_TOKENS[dictionary]
     if index >= len(entries):
-        raise DecodeError(f"недопустимый индекс токена: {index}")
+        raise DecodeError(f"invalid token index: {index}")
     return entries[index]
 
 
@@ -50,7 +50,7 @@ class _Reader:
 
     def _check(self, length: int) -> None:
         if self.index + length > len(self._data):
-            raise DecodeError("неожиданный конец кадра")
+            raise DecodeError("unexpected end of frame")
 
     def read_byte(self) -> int:
         self._check(1)
@@ -79,7 +79,7 @@ class _Reader:
         start = self.read_byte()
         count = start & 0x7F
         if count > tokens.PACKED_MAX:
-            raise DecodeError(f"недопустимая длина упаковки: {count}")
+            raise DecodeError(f"invalid packed length: {count}")
         chars: list[str] = []
         for _ in range(count):
             value = self.read_byte()
@@ -96,7 +96,7 @@ class _Reader:
             return self.read_byte()
         if tag == tokens.LIST_16:
             return self.read_int(2)
-        raise DecodeError(f"недопустимый тег размера списка: {tag}")
+        raise DecodeError(f"invalid list size tag: {tag}")
 
     def read_string(self, tag: int) -> str:
         if 1 <= tag < len(tokens.SINGLE_BYTE_TOKENS):
@@ -121,13 +121,13 @@ class _Reader:
             return self._read_interop_jid()
         if tag in (tokens.HEX_8, tokens.NIBBLE_8):
             return self.read_packed(tag)
-        raise DecodeError(f"недопустимый тег строки: {tag}")
+        raise DecodeError(f"invalid string tag: {tag}")
 
     def _read_jid_pair(self) -> str:
         user = self.read_string(self.read_byte())
         server = self.read_string(self.read_byte())
         if not server:
-            raise DecodeError("недопустимая JID-пара")
+            raise DecodeError("invalid JID pair")
         return f"{user}@{server}" if user else f"@{server}"
 
     def _read_ad_jid(self) -> str:
@@ -163,7 +163,7 @@ class _Reader:
         list_size = self.read_list_size(self.read_byte())
         tag = self.read_string(self.read_byte())
         if list_size == 0 or not tag:
-            raise DecodeError("пустой узел")
+            raise DecodeError("empty node")
         attrs: dict[str, str] = {}
         for _ in range((list_size - 1) >> 1):
             key = self.read_string(self.read_byte())
@@ -190,15 +190,15 @@ def decode_uncompressed(payload: bytes) -> Node:
 
 
 def decode_node(frame: bytes) -> Node:
-    """Разбирает кадр: при флаге 0x02 распаковывает zlib, иначе снимает ведущий байт."""
+    """Decode a frame: inflate zlib when flag 0x02 is set, otherwise strip the leading byte."""
     if not frame:
-        raise DecodeError("пустой кадр")
+        raise DecodeError("empty frame")
     flag = frame[0]
     if flag & 0x02:
         try:
             payload = zlib.decompress(frame[1:])
         except zlib.error as exc:
-            raise DecodeError(f"не удалось распаковать кадр: {exc}") from exc
+            raise DecodeError(f"failed to inflate frame: {exc}") from exc
     else:
         payload = frame[1:]
     return decode_uncompressed(payload)

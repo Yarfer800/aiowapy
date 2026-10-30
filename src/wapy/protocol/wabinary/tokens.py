@@ -1,4 +1,4 @@
-"""Токен-словарь WABinary, вендоренный из эталонной реализации."""
+"""WABinary token dictionary vendored from the reference implementation."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""wapy — асинхронный клиент WhatsApp Multi-Device."""
+"""wapy — asynchronous WhatsApp Multi-Device client."""
 
 from __future__ import annotations
 

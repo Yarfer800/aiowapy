@@ -32,7 +32,7 @@ def fixtures() -> list[dict[str, Any]]:
 
 @pytest.mark.parametrize("case", fixtures(), ids=lambda case: case["name"])
 def test_decode_reference_frames(case: dict[str, Any]) -> None:
-    """Наш декодер обязан воспроизводить результат эталонного декодера."""
+    """Our decoder must reproduce the reference decoder output."""
     decoded = decode_node(bytes.fromhex(case["hex"]))
     assert decoded == load_node(case["decoded"])
 

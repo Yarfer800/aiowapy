@@ -156,14 +156,14 @@
     "node": {
       "tag": "message",
       "attrs": {},
-      "content": "привет"
+      "content": "héllo 🌍"
     },
-    "hex": "00f80213fc0cd0bfd180d0b8d0b2d0b5d182",
+    "hex": "00f80213fc0b68c3a96c6c6f20f09f8c8d",
     "decoded": {
       "tag": "message",
       "attrs": {},
       "content": {
-        "$binary": "0L/RgNC40LLQtdGC"
+        "$binary": "aMOpbGxvIPCfjI0="
       }
     }
   },

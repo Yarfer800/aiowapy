@@ -1,4 +1,4 @@
-"""Узел протокола WABinary."""
+"""A WABinary protocol node."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 @dataclass(slots=True)
 class Node:
-    """Узел: тег, атрибуты и содержимое (дети, текст или бинарные данные)."""
+    """Node with a tag, attributes and content (children, text or binary data)."""
 
     tag: str
     attrs: dict[str, str] = field(default_factory=dict)

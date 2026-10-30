@@ -1,4 +1,4 @@
-"""Криптографический слой wapy."""
+"""Cryptographic layer of wapy."""
 
 from __future__ import annotations
 

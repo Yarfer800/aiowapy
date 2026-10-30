@@ -1,7 +1,7 @@
-"""Криптопримитивы: HKDF, HMAC, AES, X25519.
+"""Cryptographic primitives: HKDF, HMAC, AES, X25519.
 
-Всё, что нужно протоколу, в одной точке — чтобы вызывающий код не тянул
-`cryptography` напрямую и не разносил обработку ошибок по слоям.
+Everything the protocol needs lives in one place, so callers never import
+`cryptography` directly and error handling does not spread across layers.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ _HASH_LEN = 32
 
 
 class CryptoError(WapyError):
-    """Криптографическая операция невозможна или данные повреждены."""
+    """Cryptographic operation is impossible or the data is corrupted."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,11 +51,11 @@ def hmac_sha256(key: bytes, data: bytes) -> bytes:
 
 
 def hkdf(ikm: bytes, length: int, info: bytes, salt: bytes | None = None) -> bytes:
-    """HKDF-SHA256 (RFC 5869). salt=None — 32 нулевых байта, как в WhatsApp."""
+    """HKDF-SHA256 (RFC 5869). salt=None means 32 zero bytes, as WhatsApp uses."""
     if length <= 0:
-        raise CryptoError("длина вывода HKDF должна быть положительной")
+        raise CryptoError("HKDF output length must be positive")
     if length > 255 * _HASH_LEN:
-        raise CryptoError("запрошено больше байтов, чем допускает HKDF-SHA256")
+        raise CryptoError("requested more bytes than HKDF-SHA256 allows")
     actual_salt = bytes(_HASH_LEN) if salt is None else salt
     prk = hmac_sha256(actual_salt, ikm)
     blocks: list[bytes] = []
@@ -71,23 +71,23 @@ def hkdf(ikm: bytes, length: int, info: bytes, salt: bytes | None = None) -> byt
 
 
 def aes_cbc_encrypt(key: bytes, iv: bytes, data: bytes, *, pad: bool = True) -> bytes:
-    _require_length(key, KEY_LEN, "ключ")
+    _require_length(key, KEY_LEN, "key")
     _require_length(iv, IV_LEN, "IV")
     payload = data
     if pad:
         padder = symmetric_padding.PKCS7(_BLOCK * 8).padder()
         payload = padder.update(data) + padder.finalize()
     elif len(payload) % _BLOCK != 0:
-        raise CryptoError("данные не выровнены по блоку, а padding отключён")
+        raise CryptoError("data is not block aligned and padding is disabled")
     encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
     return encryptor.update(payload) + encryptor.finalize()
 
 
 def aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes, *, unpad: bool = True) -> bytes:
-    _require_length(key, KEY_LEN, "ключ")
+    _require_length(key, KEY_LEN, "key")
     _require_length(iv, IV_LEN, "IV")
     if not data or len(data) % _BLOCK != 0:
-        raise CryptoError("шифртекст не выровнен по блоку")
+        raise CryptoError("ciphertext is not block aligned")
     decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
     payload = decryptor.update(data) + decryptor.finalize()
     if not unpad:
@@ -96,23 +96,23 @@ def aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes, *, unpad: bool = True) -
     try:
         return unpadder.update(payload) + unpadder.finalize()
     except ValueError as exc:
-        raise CryptoError("некорректный padding в расшифрованных данных") from exc
+        raise CryptoError("invalid padding in decrypted data") from exc
 
 
 def aes_gcm_encrypt(key: bytes, iv: bytes, data: bytes, aad: bytes = b"") -> bytes:
-    _require_length(key, KEY_LEN, "ключ")
+    _require_length(key, KEY_LEN, "key")
     try:
         return AESGCM(key).encrypt(iv, data, aad)
-    except (ValueError, InvalidTag) as exc:  # pragma: no cover - защита от неверных длин
-        raise CryptoError("не удалось зашифровать данные AES-GCM") from exc
+    except (ValueError, InvalidTag) as exc:  # pragma: no cover - guards against wrong lengths
+        raise CryptoError("failed to encrypt data with AES-GCM") from exc
 
 
 def aes_gcm_decrypt(key: bytes, iv: bytes, data: bytes, aad: bytes = b"") -> bytes:
-    _require_length(key, KEY_LEN, "ключ")
+    _require_length(key, KEY_LEN, "key")
     try:
         return AESGCM(key).decrypt(iv, data, aad)
     except (ValueError, InvalidTag) as exc:
-        raise CryptoError("данные повреждены или ключ неверен") from exc
+        raise CryptoError("data is corrupted or the key is wrong") from exc
 
 
 def generate_keypair() -> KeyPair:
@@ -122,25 +122,25 @@ def generate_keypair() -> KeyPair:
 
 
 def public_from_private(private: bytes) -> bytes:
-    _require_length(private, KEY_LEN, "приватный ключ")
+    _require_length(private, KEY_LEN, "private key")
     try:
         key = X25519PrivateKey.from_private_bytes(private)
     except ValueError as exc:
-        raise CryptoError("некорректный приватный ключ X25519") from exc
+        raise CryptoError("invalid X25519 private key") from exc
     return _public_bytes(key)
 
 
 def dh(private: bytes, public: bytes) -> bytes:
-    _require_length(private, KEY_LEN, "приватный ключ")
-    _require_length(public, KEY_LEN, "публичный ключ")
+    _require_length(private, KEY_LEN, "private key")
+    _require_length(public, KEY_LEN, "public key")
     try:
         key = X25519PrivateKey.from_private_bytes(private)
         peer = X25519PublicKey.from_public_bytes(public)
         shared = key.exchange(peer)
     except (ValueError, TypeError) as exc:
-        raise CryptoError("не удалось вычислить общий секрет X25519") from exc
+        raise CryptoError("failed to compute the X25519 shared secret") from exc
     if not any(shared):
-        raise CryptoError("общий секрет X25519 вырожден (нулевой)")
+        raise CryptoError("X25519 shared secret is degenerate (all zeros)")
     return shared
 
 
@@ -152,4 +152,4 @@ def _public_bytes(private: X25519PrivateKey) -> bytes:
 
 def _require_length(value: bytes, expected: int, name: str) -> None:
     if len(value) != expected:
-        raise CryptoError(f"{name}: ожидалось {expected} байт, получено {len(value)}")
+        raise CryptoError(f"{name}: expected {expected} bytes, got {len(value)}")

@@ -1,4 +1,4 @@
-"""Автопроверка правил зависимостей из раздела 4 спецификации."""
+"""Automatic check of the dependency rules from spec section 4."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "wapy"
 
-# Ключ — верхний уровень пакета; значение — префиксы, которые ему запрещено импортировать.
+# Key is a top-level package; value holds prefixes it must not import.
 LAYER_RULES: dict[str, set[str]] = {
     "protocol": {
         "wapy.models",
@@ -41,7 +41,7 @@ LAYER_RULES: dict[str, set[str]] = {
 
 
 def imported_modules(path: Path) -> set[str]:
-    """Абсолютные имена модулей, импортируемых файлом."""
+    """Absolute module names imported by the file."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -66,4 +66,4 @@ def test_layers_do_not_depend_upwards() -> None:
             for banned in forbidden:
                 if is_violation(module, banned):
                     violations.append(f"{path.relative_to(SRC)} -> {module}")
-    assert violations == [], "Нарушены правила слоёв:\n" + "\n".join(violations)
+    assert violations == [], "Layer rules violated:\n" + "\n".join(violations)
