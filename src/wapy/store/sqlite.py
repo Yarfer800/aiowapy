@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
@@ -144,3 +146,26 @@ class SessionStore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+
+    async def load_creds(self) -> dict[str, Any] | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT data FROM creds WHERE id = 1")
+            row = await cursor.fetchone()
+            await cursor.close()
+        if row is None:
+            return None
+        decoded: dict[str, Any] = json.loads(bytes(row["data"]).decode("utf-8"))
+        return decoded
+
+    async def save_creds(self, creds: Mapping[str, Any]) -> None:
+        payload = json.dumps(dict(creds), ensure_ascii=False).encode("utf-8")
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO creds (id, data) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+                (payload,),
+            )
+
+    async def clear_creds(self) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute("DELETE FROM creds WHERE id = 1")
