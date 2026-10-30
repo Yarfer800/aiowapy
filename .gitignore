@@ -29,6 +29,10 @@ node_modules/
 # Captured traffic (never commit)
 *.har
 *.har.gz
+*.pcap
+*.pcapng
+*.mitm
+keys.log
 
 # Local scratch
 /tmp/
