@@ -7,7 +7,7 @@ import contextlib
 import json
 import os
 import sqlite3
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -169,3 +169,63 @@ class SessionStore:
     async def clear_creds(self) -> None:
         async with self._tx(write=True) as conn:
             await conn.execute("DELETE FROM creds WHERE id = 1")
+
+    async def add_prekeys(self, prekeys: Iterable[tuple[int, bytes]]) -> None:
+        rows = [(prekey_id, key_pair, 0) for prekey_id, key_pair in prekeys]
+        if not rows:
+            return
+        async with self._tx(write=True) as conn:
+            await conn.executemany(
+                "INSERT INTO prekeys (id, key_pair, uploaded) VALUES (?, ?, ?)", rows
+            )
+
+    async def get_prekey(self, prekey_id: int) -> bytes | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT key_pair FROM prekeys WHERE id = ?", (prekey_id,))
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else bytes(row["key_pair"])
+
+    async def consume_prekey(self, prekey_id: int) -> bytes | None:
+        async with self._tx(write=True) as conn:
+            cursor = await conn.execute("SELECT key_pair FROM prekeys WHERE id = ?", (prekey_id,))
+            row = await cursor.fetchone()
+            await cursor.close()
+            if row is None:
+                return None
+            await conn.execute("DELETE FROM prekeys WHERE id = ?", (prekey_id,))
+            return bytes(row["key_pair"])
+
+    async def pending_prekeys(self) -> list[tuple[int, bytes]]:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT id, key_pair FROM prekeys WHERE uploaded = 0 ORDER BY id"
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [(int(row["id"]), bytes(row["key_pair"])) for row in rows]
+
+    async def mark_prekeys_uploaded(self, ids: Sequence[int]) -> None:
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                f"UPDATE prekeys SET uploaded = 1 WHERE id IN ({placeholders})", tuple(ids)
+            )
+
+    async def count_available_prekeys(self) -> int:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT count(*) AS n FROM prekeys WHERE uploaded = 1")
+            row = await cursor.fetchone()
+            await cursor.close()
+        return 0 if row is None else int(row["n"])
+
+    async def max_prekey_id(self) -> int | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT max(id) AS n FROM prekeys")
+            row = await cursor.fetchone()
+            await cursor.close()
+        if row is None or row["n"] is None:
+            return None
+        return int(row["n"])
