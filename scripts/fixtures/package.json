@@ -1,0 +1,9 @@
+{
+  "name": "wapy-fixtures",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only generator of golden vectors from the reference implementation",
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14"
+  }
+}
