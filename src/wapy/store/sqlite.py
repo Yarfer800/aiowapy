@@ -229,3 +229,74 @@ class SessionStore:
         if row is None or row["n"] is None:
             return None
         return int(row["n"])
+
+    async def get_session(self, jid: str) -> bytes | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT record FROM sessions WHERE jid = ?", (jid,))
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else bytes(row["record"])
+
+    async def put_session(self, jid: str, record: bytes) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO sessions (jid, record) VALUES (?, ?) "
+                "ON CONFLICT(jid) DO UPDATE SET record = excluded.record",
+                (jid, record),
+            )
+
+    async def delete_session(self, jid: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute("DELETE FROM sessions WHERE jid = ?", (jid,))
+
+    async def get_identity(self, jid: str) -> bytes | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT key FROM identity_keys WHERE jid = ?", (jid,))
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else bytes(row["key"])
+
+    async def put_identity(self, jid: str, key: bytes, trust: str = "trusted") -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO identity_keys (jid, key, trust) VALUES (?, ?, ?) "
+                "ON CONFLICT(jid) DO UPDATE SET key = excluded.key, trust = excluded.trust",
+                (jid, key, trust),
+            )
+
+    async def get_app_state_key(self, key_id: bytes) -> bytes | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT key_data FROM app_state_keys WHERE key_id = ?", (key_id,)
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else bytes(row["key_data"])
+
+    async def put_app_state_key(self, key_id: bytes, key_data: bytes) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO app_state_keys (key_id, key_data) VALUES (?, ?) "
+                "ON CONFLICT(key_id) DO UPDATE SET key_data = excluded.key_data",
+                (key_id, key_data),
+            )
+
+    async def get_app_state_version(self, name: str) -> tuple[int, bytes] | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT version, hash FROM app_state_ver WHERE name = ?", (name,)
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        if row is None:
+            return None
+        return int(row["version"]), bytes(row["hash"])
+
+    async def set_app_state_version(self, name: str, version: int, digest: bytes) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO app_state_ver (name, version, hash) VALUES (?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET version = excluded.version, "
+                "hash = excluded.hash",
+                (name, version, digest),
+            )
