@@ -11,6 +11,11 @@ if [[ -f /run/wacap.pid ]]; then
     pid="$(sudo cat /run/wacap.pid)"
     echo "==> Stopping mitmdump (pid $pid)"
     sudo kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+        sudo kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    sudo kill -9 "$pid" 2>/dev/null || true
     sudo rm -f /run/wacap.pid
 fi
 

@@ -34,6 +34,8 @@ table inet wacap {
         meta skuid 0 return
 
         ip daddr @wa4 tcp dport 443 redirect to :8899
-        ip6 daddr @wa6 tcp dport 443 redirect to :8899
+        # IPv4 only: an IPv4 redirect lands on 127.0.0.1, while a Python socket bound to
+        # [::] is v6-only here. Rejecting IPv6 makes the browser fall back to IPv4 fast.
+        ip6 daddr @wa6 tcp dport 443 reject
     }
 }
