@@ -161,8 +161,11 @@ def parse_companion_finish(node: Node) -> CompanionFinishRequest:
     registration = child(node, "link_code_companion_reg")
     if registration is None:
         raise PairingCodeError("node carries no link_code_companion_reg")
-    if registration.attrs.get("stage") != "companion_finish":
-        raise PairingCodeError(f"unexpected stage: {registration.attrs.get('stage')!r}")
+    # The server pushes this as a `notification` with no stage attribute, so the
+    # presence of the pairing fields is the only reliable signal.
+    stage = registration.attrs.get("stage")
+    if stage is not None and stage != "companion_finish":
+        raise PairingCodeError(f"unexpected stage: {stage!r}")
 
     def payload(tag: str) -> bytes:
         found = child(registration, tag)

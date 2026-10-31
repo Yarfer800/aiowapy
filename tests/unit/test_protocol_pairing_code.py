@@ -229,3 +229,27 @@ def test_companion_finish_node_encodes() -> None:
 def test_bundle_key_info_string() -> None:
     assert KEY_BUNDLE_INFO == b"link_code_pairing_key_bundle_encryption_key"
     assert aes_ctr(bytes(32), bytes(16), b"x") != b"x"
+
+
+def test_parse_companion_finish_accepts_a_stageless_notification() -> None:
+    node = Node(
+        tag="notification",
+        attrs={"type": "link_code_companion_reg"},
+        content=[
+            Node(
+                tag="link_code_companion_reg",
+                attrs={},
+                content=[
+                    Node(tag="link_code_pairing_ref", attrs={}, content=b"ref"),
+                    Node(tag="primary_identity_pub", attrs={}, content=b"\x11" * 32),
+                    Node(
+                        tag="link_code_pairing_wrapped_primary_ephemeral_pub",
+                        attrs={},
+                        content=b"\x22" * 80,
+                    ),
+                ],
+            )
+        ],
+    )
+    request = parse_companion_finish(node)
+    assert request.ref == b"ref"

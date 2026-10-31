@@ -292,7 +292,15 @@ class ClientSession:
 
     async def _await_companion_finish(self, transport: Transport) -> CompanionFinishRequest:
         while True:
-            node = decode_node(await transport.recv_encrypted())
+            try:
+                frame = await transport.recv_encrypted()
+            except (ConnectionError, OSError) as exc:
+                raise SessionError("connection closed before the phone confirmed") from exc
+            except Exception as exc:
+                if type(exc).__name__.startswith("ConnectionClosed"):
+                    raise SessionError("connection closed before the phone confirmed") from exc
+                raise
+            node = decode_node(frame)
             if self._observer is not None:
                 self._observer(node)
             self._last_recv = time.monotonic()
@@ -305,7 +313,15 @@ class ClientSession:
         self, transport: Transport, state: SessionState, store: SessionStore
     ) -> None:
         while True:
-            node = decode_node(await transport.recv_encrypted())
+            try:
+                frame = await transport.recv_encrypted()
+            except (ConnectionError, OSError) as exc:
+                raise SessionError("connection closed before pairing completed") from exc
+            except Exception as exc:
+                if type(exc).__name__.startswith("ConnectionClosed"):
+                    raise SessionError("connection closed before pairing completed") from exc
+                raise
+            node = decode_node(frame)
             if self._observer is not None:
                 self._observer(node)
             self._last_recv = time.monotonic()
