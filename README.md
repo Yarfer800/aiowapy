@@ -1,12 +1,12 @@
 # wapy
 
-Асинхронный клиент WhatsApp Multi-Device для Python: собственный протокол
-(Noise + Signal + WABinary), без официального Cloud API.
+An asynchronous WhatsApp Multi-Device client for Python: a native implementation of the
+protocol (Noise + Signal + WABinary), no official Cloud API involved.
 
-> ⚠️ **Неофициальный клиент.** Использование нарушает условия обслуживания WhatsApp,
-> и номер может быть заблокирован. Используйте тестовый номер и на свой риск.
+> ⚠️ **Unofficial client.** Using it violates WhatsApp's Terms of Service and the number
+> may be banned. Use a test number and proceed at your own risk.
 
-## Установка
+## Installation
 
 ```bash
 pip install wapy

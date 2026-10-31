@@ -1,4 +1,4 @@
-"""Кодировщик узлов WABinary, байт-в-байт совместимый с эталоном."""
+"""WABinary node encoder, byte-for-byte compatible with the reference implementation."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _MAX_FRAME = 1 << 32
 
 
 class EncodeError(WapyError):
-    """Узел невозможно закодировать."""
+    """Node cannot be encoded."""
 
 
 def _push_byte(buffer: bytearray, value: int) -> None:
@@ -32,7 +32,7 @@ def _push_int20(buffer: bytearray, value: int) -> None:
 
 def _write_byte_length(buffer: bytearray, length: int) -> None:
     if length >= _MAX_FRAME:
-        raise EncodeError(f"слишком длинное значение: {length}")
+        raise EncodeError(f"value is too long: {length}")
     if length >= 1 << 20:
         _push_byte(buffer, tokens.BINARY_32)
         _push_int(buffer, length, 4)
@@ -74,7 +74,7 @@ def _nibble_value(char: str) -> int:
         return 15
     if "0" <= char <= "9":
         return ord(char) - ord("0")
-    raise EncodeError(f'недопустимый символ для NIBBLE_8: "{char}"')
+    raise EncodeError(f'invalid character for NIBBLE_8: "{char}"')
 
 
 def _hex_value(char: str) -> int:
@@ -84,12 +84,12 @@ def _hex_value(char: str) -> int:
         return 10 + ord(char) - ord("A")
     if "a" <= char <= "f":
         return 10 + ord(char) - ord("a")
-    raise EncodeError(f'недопустимый символ для HEX_8: "{char}"')
+    raise EncodeError(f'invalid character for HEX_8: "{char}"')
 
 
 def _write_packed(buffer: bytearray, value: str, tag: int) -> None:
     if len(value) > tokens.PACKED_MAX:
-        raise EncodeError("слишком длинное значение для упаковки")
+        raise EncodeError("value is too long to pack")
     _push_byte(buffer, tag)
     packed_length = (len(value) + 1) // 2
     if len(value) % 2 != 0:
@@ -152,7 +152,7 @@ def _write_list_start(buffer: bytearray, size: int) -> None:
 
 def _write_node(buffer: bytearray, node: Node) -> None:
     if not node.tag:
-        raise EncodeError("у узла отсутствует тег")
+        raise EncodeError("node has no tag")
     attrs = {key: value for key, value in node.attrs.items() if value is not None}
     _write_list_start(buffer, 2 * len(attrs) + 1 + (0 if node.content is None else 1))
     _write_string(buffer, node.tag)
@@ -172,11 +172,11 @@ def _write_node(buffer: bytearray, node: Node) -> None:
         for child in children:
             _write_node(buffer, child)
     else:
-        raise EncodeError(f"неподдерживаемый тип содержимого: {type(node.content)!r}")
+        raise EncodeError(f"unsupported content type: {type(node.content)!r}")
 
 
 def encode_node(node: Node, *, compress: bool = False) -> bytes:
-    """Кодирует узел в кадр с ведущим байтом флага сжатия."""
+    """Encode a node into a frame prefixed with the compression flag byte."""
     payload = bytearray()
     _write_node(payload, node)
     if compress:

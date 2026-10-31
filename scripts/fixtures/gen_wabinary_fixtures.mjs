@@ -1,6 +1,6 @@
-// Генерация золотых векторов эталонной реализацией Baileys.
-// Запуск: cd scripts/fixtures && npm i && node gen_wabinary_fixtures.mjs
-// Результат (tests/fixtures/wabinary/nodes.json) коммитится; в CI Node не нужен.
+// Generate golden vectors with the Baileys reference implementation.
+// Usage: cd scripts/fixtures && npm i && node gen_wabinary_fixtures.mjs
+// The result (tests/fixtures/wabinary/nodes.json) is committed; CI needs no Node.
 import { writeFileSync } from 'node:fs'
 import { encodeBinaryNode } from '@whiskeysockets/baileys/lib/WABinary/encode.js'
 import { decodeBinaryNode } from '@whiskeysockets/baileys/lib/WABinary/decode.js'
@@ -44,7 +44,7 @@ const cases = [
   },
   { name: 'nibble_odd', node: { tag: 'iq', attrs: { id: '12345' } } },
   { name: 'hex_string', node: { tag: 'iq', attrs: { id: 'ABCDEF' } } },
-  { name: 'unicode_text', node: { tag: 'message', attrs: {}, content: 'привет' } },
+  { name: 'unicode_text', node: { tag: 'message', attrs: {}, content: 'héllo 🌍' } },
   {
     name: 'nested_two_levels',
     node: {
@@ -101,4 +101,4 @@ writeFileSync(
   new URL('../../tests/fixtures/wabinary/nodes.json', import.meta.url),
   JSON.stringify(fixtures, null, 2) + '\n'
 )
-console.log(`Записано ${fixtures.length} фикстур`)
+console.log(`Wrote ${fixtures.length} fixtures`)

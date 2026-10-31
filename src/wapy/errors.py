@@ -1,15 +1,15 @@
-"""Иерархия исключений wapy."""
+"""Exception hierarchy for wapy."""
 
 from __future__ import annotations
 
 
 class WapyError(Exception):
-    """База для всех ошибок библиотеки."""
+    """Base class for all library errors."""
 
 
 class StoreError(WapyError):
-    """Ошибка хранилища сессии."""
+    """Session store error."""
 
 
 class StoreNotOpenError(StoreError):
-    """Хранилище используется до open() или после close()."""
+    """Store is used before open() or after close()."""

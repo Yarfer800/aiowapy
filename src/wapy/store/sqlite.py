@@ -1,4 +1,4 @@
-"""SQLite-хранилище сессии: один файл на аккаунт."""
+"""SQLite session store: one file per account."""
 
 from __future__ import annotations
 
@@ -27,20 +27,20 @@ _PRAGMAS = (
 
 
 def migration_files() -> list[tuple[int, Path]]:
-    """Нумерованные миграции в порядке применения."""
+    """Numbered migrations in application order."""
     result: list[tuple[int, Path]] = []
     for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
         prefix = path.name.split("_", 1)[0]
         try:
             number = int(prefix)
-        except ValueError as exc:  # pragma: no cover - защита от кривого имени файла
-            raise StoreError(f"Некорректное имя миграции: {path.name}") from exc
+        except ValueError as exc:  # pragma: no cover - guards against a malformed file name
+            raise StoreError(f"Invalid migration file name: {path.name}") from exc
         result.append((number, path))
     return result
 
 
 def ensure_private_file(path: Path) -> None:
-    """Создать файл с правами 0600 или ужесточить права существующего."""
+    """Create the file with 0600 permissions or tighten an existing file."""
     if path.exists():
         path.chmod(0o600)
         return
@@ -51,10 +51,10 @@ def ensure_private_file(path: Path) -> None:
 
 
 class SessionStore:
-    """Хранилище состояния одной сессии WhatsApp.
+    """Storage for the state of a single WhatsApp session.
 
-    Все операции сериализуются одним asyncio.Lock: SQLite имеет одного писателя,
-    а общий lock заодно исключает чтение недокоммиченного состояния тем же соединением.
+    All operations are serialized by a single asyncio.Lock: SQLite allows one writer,
+    and the shared lock also prevents reading uncommitted state over the same connection.
     """
 
     def __init__(self, path: Path | str) -> None:
@@ -68,12 +68,12 @@ class SessionStore:
 
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
-            raise StoreNotOpenError("SessionStore не открыт: вызовите await open()")
+            raise StoreNotOpenError("SessionStore is not open: call await open()")
         return self._conn
 
     @contextlib.asynccontextmanager
     async def _tx(self, *, write: bool) -> AsyncIterator[aiosqlite.Connection]:
-        """Транзакция под общим lock: коммит при выходе, откат при исключении."""
+        """Transaction under the shared lock: commit on exit, rollback on exception."""
         conn = self._require_conn()
         async with self._lock:
             try:

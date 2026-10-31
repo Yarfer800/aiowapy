@@ -1,10 +1,10 @@
-"""Roundtrip decode(encode(node)) == node на случайных деревьях.
+"""Roundtrip decode(encode(node)) == node over random trees.
 
-Содержимое-строка в проводном формате не всегда возвращается строкой: только
-токены, JID и NIBBLE/HEX-строки декодируются в `str`, всё остальное — в `bytes`
-(так же ведёт себя эталонная реализация). Поэтому общий roundtrip-тест
-ограничен содержимым `None | bytes | list[Node]`, а строковое содержимое
-проверяется отдельно на токенах.
+String content does not always come back as a string on the wire: only tokens,
+JIDs and NIBBLE/HEX strings decode to `str`, everything else decodes to `bytes`
+(the reference implementation behaves the same way). The general roundtrip test
+therefore covers only `None | bytes | list[Node]`, while string content
+is checked separately on tokens.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 
 from wapy.protocol.wabinary import Node, decode_node, encode_node
 
-# Без '@': строка с '@' трактуется как JID, а некорректный JID не переживает roundtrip.
+# No '@': a string containing '@' is treated as a JID, and an invalid JID does not roundtrip.
 TEXT = st.text(
     alphabet=st.characters(blacklist_categories=("Cc", "Cs"), blacklist_characters="@"),
     max_size=40,

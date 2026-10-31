@@ -1,4 +1,4 @@
-"""Хранилище состояния сессии."""
+"""Session state storage."""
 
 from __future__ import annotations
 

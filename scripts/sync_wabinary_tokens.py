@@ -1,7 +1,7 @@
-"""Генерация src/wapy/protocol/wabinary/tokens.json из эталонного constants.ts.
+"""Generate src/wapy/protocol/wabinary/tokens.json from the reference constants.ts.
 
-Запуск: uv run python scripts/sync_wabinary_tokens.py
-Требует сеть. Результат коммитится; в рантайме сеть и Node не нужны.
+Usage: uv run python scripts/sync_wabinary_tokens.py
+Requires network access. The result is committed; runtime needs no network or Node.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def fetch_source() -> str:
 
 
 def extract_literal(source: str, name: str) -> object:
-    """Вырезает JS-литерал массива и разбирает его как Python-литерал."""
+    """Cut out a JS array literal and parse it as a Python literal."""
     marker = f"export const {name}"
     start_of_decl = source.index(marker)
     opening = source.index("[", start_of_decl)
@@ -38,7 +38,7 @@ def extract_literal(source: str, name: str) -> object:
             depth -= 1
             if depth == 0:
                 return ast.literal_eval(source[opening : index + 1])
-    raise SystemExit(f"Не найден конец литерала {name}")
+    raise SystemExit(f"end of literal not found: {name}")
 
 
 def extract_tags(source: str) -> dict[str, int]:
@@ -67,7 +67,7 @@ def main() -> None:
     }
     TARGET.parent.mkdir(parents=True, exist_ok=True)
     TARGET.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    print(f"Записано {TARGET}: {len(payload['single'])} однобайтовых токенов")
+    print(f"Wrote {TARGET}: {len(payload['single'])} single-byte tokens")
 
 
 if __name__ == "__main__":

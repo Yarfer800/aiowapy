@@ -1,4 +1,4 @@
-"""Криптографический слой wapy."""
+"""Cryptographic layer of wapy."""
 
 from __future__ import annotations
 
@@ -26,6 +26,16 @@ from wapy.crypto.primitives import (
     public_from_private,
     sha256,
 )
+from wapy.crypto.signal_proto import (
+    PreKeyWhisperMessage,
+    SignalProtoError,
+    WhisperMessage,
+    decode_prekey,
+    decode_whisper,
+    encode_prekey,
+    encode_whisper,
+)
+from wapy.crypto.xeddsa import XEdDSAError, montgomery_to_edwards, sign, verify
 
 __all__ = [
     "MEDIA_MAC_LEN",
@@ -34,18 +44,29 @@ __all__ = [
     "KeyPair",
     "MediaCryptoError",
     "MediaKeys",
+    "PreKeyWhisperMessage",
+    "SignalProtoError",
+    "WhisperMessage",
+    "XEdDSAError",
     "aes_cbc_decrypt",
     "aes_cbc_encrypt",
     "aes_gcm_decrypt",
     "aes_gcm_encrypt",
+    "decode_prekey",
+    "decode_whisper",
     "decrypt_media",
     "derive_media_keys",
     "dh",
+    "encode_prekey",
+    "encode_whisper",
     "encrypt_media",
     "generate_keypair",
     "hkdf",
     "hmac_sha256",
     "media_info",
+    "montgomery_to_edwards",
     "public_from_private",
     "sha256",
+    "sign",
+    "verify",
 ]

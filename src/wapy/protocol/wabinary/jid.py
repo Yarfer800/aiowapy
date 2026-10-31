@@ -1,4 +1,4 @@
-"""Проводное представление JID: `user[:device][_agent]@server`."""
+"""Wire representation of a JID: `user[:device][_agent]@server`."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def jid_encode(
     device: int | None = None,
     agent: int | None = None,
 ) -> str:
-    """Собирает JID. Нулевые device/agent опускаются — так же, как в эталоне."""
+    """Build a JID. Zero device/agent values are omitted, matching the reference."""
     parts = "" if user is None else str(user)
     if agent:
         parts += f"_{agent}"
@@ -41,7 +41,7 @@ def jid_encode(
 
 
 def jid_decode(jid: str | None) -> FullJid | None:
-    """Разбирает JID; None, если строку нельзя считать JID."""
+    """Parse a JID; returns None when the string is not a JID."""
     if not jid:
         return None
     separator = jid.find("@")
@@ -73,7 +73,7 @@ def jid_decode(jid: str | None) -> FullJid | None:
 
 
 def server_from_domain_type(server: str, domain_type: int | None) -> str:
-    """Сервер, который подразумевается типом домена (для AD_JID)."""
+    """Server implied by the domain type (used for AD_JID)."""
     if domain_type is None:
         return server
     return _DOMAIN_TO_SERVER.get(domain_type, server)

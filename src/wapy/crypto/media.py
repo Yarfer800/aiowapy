@@ -1,4 +1,4 @@
-"""Шифрование медиа по схеме WhatsApp: HKDF + AES-256-CBC + усечённый HMAC."""
+"""WhatsApp media encryption: HKDF + AES-256-CBC + truncated HMAC."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from wapy.crypto.primitives import (
 MEDIA_MAC_LEN = 10
 _MEDIA_KEY_LEN = 32
 
-# Соответствие типов и строк HKDF — как в эталонной реализации.
+# Media type to HKDF info mapping, matching the reference implementation.
 MEDIA_INFO: dict[str, str] = {
     "audio": "Audio",
     "document": "Document",
@@ -40,7 +40,7 @@ MEDIA_INFO: dict[str, str] = {
 
 
 class MediaCryptoError(CryptoError):
-    """Медиа-данные повреждены или параметры некорректны."""
+    """Media data is corrupted or the parameters are invalid."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,22 +60,20 @@ class EncryptedMedia:
 
     @property
     def payload(self) -> bytes:
-        """То, что уходит на CDN: шифртекст, за которым следует MAC."""
+        """Bytes uploaded to the CDN: ciphertext followed by the MAC."""
         return self.ciphertext + self.mac
 
 
 def media_info(media_type: str) -> str:
     label = MEDIA_INFO.get(media_type)
     if label is None:
-        raise MediaCryptoError(f"неизвестный тип медиа: {media_type!r}")
+        raise MediaCryptoError(f"unknown media type: {media_type!r}")
     return f"WhatsApp {label} Keys"
 
 
 def derive_media_keys(media_key: bytes, media_type: str) -> MediaKeys:
     if len(media_key) != _MEDIA_KEY_LEN:
-        raise MediaCryptoError(
-            f"mediaKey: ожидалось {_MEDIA_KEY_LEN} байт, получено {len(media_key)}"
-        )
+        raise MediaCryptoError(f"mediaKey: expected {_MEDIA_KEY_LEN} bytes, got {len(media_key)}")
     expanded = hkdf(media_key, 112, media_info(media_type).encode("utf-8"))
     return MediaKeys(
         iv=expanded[0:16],
@@ -99,11 +97,11 @@ def encrypt_media(media_key: bytes, media_type: str, plaintext: bytes) -> Encryp
 
 def decrypt_media(media_key: bytes, media_type: str, payload: bytes) -> bytes:
     if len(payload) <= MEDIA_MAC_LEN:
-        raise MediaCryptoError("медиа-payload короче MAC")
+        raise MediaCryptoError("media payload is shorter than the MAC")
     keys = derive_media_keys(media_key, media_type)
     ciphertext = payload[:-MEDIA_MAC_LEN]
     mac = payload[-MEDIA_MAC_LEN:]
     expected = hmac_sha256(keys.mac_key, keys.iv + ciphertext)[:MEDIA_MAC_LEN]
     if not stdlib_hmac.compare_digest(mac, expected):
-        raise MediaCryptoError("MAC медиа не совпадает: данные повреждены")
+        raise MediaCryptoError("media MAC mismatch: data is corrupted")
     return aes_cbc_decrypt(keys.cipher_key, keys.iv, ciphertext)

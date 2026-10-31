@@ -11,6 +11,7 @@ venv/
 
 # Tooling caches
 .pytest_cache/
+.hypothesis/
 .ruff_cache/
 .mypy_cache/
 .coverage
@@ -25,6 +26,18 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# Captured traffic (never commit)
+*.har
+*.har.gz
+*.pcap
+*.pcapng
+*.mitm
+keys.log
+/flows*
+
+# Local-only debugging tools (kept on disk, never committed)
+/tools/capture/
 
 # Local scratch
 /tmp/

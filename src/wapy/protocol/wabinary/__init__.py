@@ -1,4 +1,4 @@
-"""Бинарный кодек узлов WhatsApp."""
+"""Binary node codec for WhatsApp."""
 
 from __future__ import annotations
 
