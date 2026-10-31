@@ -18,3 +18,7 @@ class SignalSessions(Protocol):
     async def encrypt(self, device: DeviceInfo, plaintext: bytes) -> EncryptedDevice:
         """Encrypt one payload for one device, establishing a session if needed."""
         ...
+
+    async def decrypt(self, device_jid: str, ciphertext: bytes, *, prekey: bool) -> bytes:
+        """Decrypt one payload addressed to our device."""
+        ...

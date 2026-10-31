@@ -11,6 +11,7 @@ from wapy.messaging.devices import (
     DeviceResolver,
 )
 from wapy.messaging.messenger import MessagingError, Messenger, NodeSender, SendResult
+from wapy.messaging.receiving import DecryptError, MessageReceiver, ReceivedMessage, ReceiveError
 from wapy.messaging.signals import SignalSessions
 
 __all__ = [
@@ -20,9 +21,13 @@ __all__ = [
     "DeviceFetcher",
     "DeviceInfo",
     "DeviceResolver",
+    "DecryptError",
+    "MessageReceiver",
     "MessagingError",
     "Messenger",
     "NodeSender",
+    "ReceiveError",
+    "ReceivedMessage",
     "SendResult",
     "SignalSessions",
 ]

@@ -19,6 +19,7 @@ from wapy.store import SessionStore
 
 JID = "491234567890@s.whatsapp.net"
 DEVICE = "491234567890:2@s.whatsapp.net"
+PEER_DEVICE = "499999999999:1@s.whatsapp.net"
 
 
 def device_list_node(devices: list[tuple[str, int, str | None]]) -> Node:
@@ -331,3 +332,126 @@ async def test_stream_sender_delegates() -> None:
 def test_message_node_roundtrips_before_send() -> None:
     node = build_bundle_query([DEVICE], "id")
     assert decode_node(encode_node(node)) == node
+
+
+async def _pair_with_peer(tmp_path, *, prekey_id: int = 5):
+    """Set up our credentials plus one stored one-time prekey, and a peer session."""
+    from wapy.crypto.primitives import generate_keypair
+    from wapy.crypto.session import initiator_session
+    from wapy.protocol.prekeys import pack_key_pair
+
+    ours = generate_credentials()
+    one_time = generate_keypair()
+    store = SessionStore(tmp_path / "bot.session")
+    await store.open()
+    await store.save_creds(ours.to_dict())
+    await store.add_prekeys([(prekey_id, pack_key_pair(one_time.private, one_time.public))])
+
+    peer_identity = generate_keypair()
+    peer_state = initiator_session(
+        peer_identity,
+        ours.identity_public,
+        ours.signed_pre_key.key_pair.public,
+        one_time.public,
+        signed_pre_key_id=ours.signed_pre_key.key_id,
+        pre_key_id=prekey_id,
+    )
+    return ours, store, peer_identity, peer_state
+
+
+async def test_decrypt_prekey_message_and_then_normal_one(tmp_path) -> None:
+    from wapy.crypto.session import encrypt as signal_encrypt
+    from wapy.crypto.session import prekey_message
+    from wapy.messaging.real import StoreSignalSessionsWithDecrypt
+
+    ours, store, peer_identity, peer_state = await _pair_with_peer(tmp_path)
+    try:
+        session_client = StoreSignalSessionsWithDecrypt(store, ours)
+        first = signal_encrypt(peer_state, b"hello")
+        wrapped = prekey_message(peer_state, first, registration_id=99)
+
+        assert await session_client.decrypt(PEER_DEVICE, wrapped, prekey=True) == b"hello"
+        second = signal_encrypt(peer_state, b"again")
+        assert await session_client.decrypt(PEER_DEVICE, second, prekey=False) == b"again"
+    finally:
+        await store.close()
+
+
+async def test_decrypt_consumes_the_one_time_prekey(tmp_path) -> None:
+    from wapy.crypto.session import encrypt as signal_encrypt
+    from wapy.crypto.session import prekey_message
+    from wapy.messaging.real import StoreSignalSessionsWithDecrypt
+
+    ours, store, _peer_identity, peer_state = await _pair_with_peer(tmp_path)
+    try:
+        session_client = StoreSignalSessionsWithDecrypt(store, ours)
+        wrapped = prekey_message(peer_state, signal_encrypt(peer_state, b"x"), registration_id=1)
+        await session_client.decrypt(PEER_DEVICE, wrapped, prekey=True)
+        assert await store.get_prekey(5) is None
+    finally:
+        await store.close()
+
+
+async def test_decrypt_without_session_fails(tmp_path) -> None:
+    from wapy.messaging.real import SessionSendError, StoreSignalSessionsWithDecrypt
+
+    ours = generate_credentials()
+    store = SessionStore(tmp_path / "bot.session")
+    await store.open()
+    try:
+        session_client = StoreSignalSessionsWithDecrypt(store, ours)
+        with pytest.raises(SessionSendError):
+            await session_client.decrypt(PEER_DEVICE, b"\x33" + bytes(40), prekey=False)
+    finally:
+        await store.close()
+
+
+class FakeSessionsForReceive:
+    def __init__(self, plaintext: bytes | None) -> None:
+        self.plaintext = plaintext
+
+    async def encrypt(self, device, plaintext):  # pragma: no cover - not used
+        raise NotImplementedError
+
+    async def decrypt(self, device_jid: str, ciphertext: bytes, *, prekey: bool) -> bytes:
+        if self.plaintext is None:
+            raise RuntimeError("no session")
+        return self.plaintext
+
+
+async def test_receiver_extracts_text() -> None:
+    from wapy.messaging.receiving import MessageReceiver
+    from wapy.protocol.messages import EncryptedDevice, build_message_node, encode_text
+
+    node = build_message_node(
+        "me@s.whatsapp.net",
+        "MSG-1",
+        [EncryptedDevice(PEER_DEVICE, b"ignored")],
+    )
+    node.attrs["from"] = "peer@s.whatsapp.net"
+    node.attrs.pop("to", None)
+
+    receiver = MessageReceiver(FakeSessionsForReceive(encode_text("hi there")))
+    received = await receiver.receive(node)
+
+    assert received.text == "hi there"
+    assert received.message_id == "MSG-1"
+    assert received.chat_jid == "peer@s.whatsapp.net"
+    assert received.device_jid == PEER_DEVICE
+
+
+async def test_receiver_reports_devices_when_all_fail() -> None:
+    from wapy.messaging.receiving import DecryptError, MessageReceiver
+    from wapy.protocol.messages import EncryptedDevice, build_message_node
+
+    node = build_message_node(
+        "me@s.whatsapp.net",
+        "MSG-2",
+        [EncryptedDevice(PEER_DEVICE, b"a"), EncryptedDevice("other:1@s.whatsapp.net", b"b")],
+    )
+    node.attrs["from"] = "peer@s.whatsapp.net"
+
+    receiver = MessageReceiver(FakeSessionsForReceive(None))
+    with pytest.raises(DecryptError) as error:
+        await receiver.receive(node)
+    assert error.value.devices == [PEER_DEVICE, "other:1@s.whatsapp.net"]

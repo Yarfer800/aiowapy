@@ -14,13 +14,17 @@ from collections.abc import Callable
 from typing import Protocol
 
 from wapy.creds import DeviceCredentials
+from wapy.crypto.primitives import KeyPair
+from wapy.crypto.session import decrypt as signal_decrypt
 from wapy.crypto.session import (
     deserialize,
     initiator_session,
     prekey_message,
+    responder_session,
     serialize,
 )
 from wapy.crypto.session import encrypt as signal_encrypt
+from wapy.crypto.signal_proto import decode_prekey
 from wapy.errors import WapyError
 from wapy.messaging.devices import DeviceError, DeviceInfo
 from wapy.protocol.bundles import PreKeyBundle, build_bundle_query, parse_bundles
@@ -119,6 +123,45 @@ class StoreSignalSessions:
         body = prekey_message(state, message, registration_id=self._credentials.registration_id)
         await self._store.put_session(device.jid, serialize(state))
         return EncryptedDevice(device_jid=device.jid, ciphertext=body, prekey=True)
+
+
+class StoreSignalSessionsWithDecrypt(StoreSignalSessions):
+    """Adds the receiving half: prekey messages create the session."""
+
+    async def decrypt(self, device_jid: str, ciphertext: bytes, *, prekey: bool) -> bytes:
+        if not prekey:
+            stored = await self._store.get_session(device_jid)
+            if stored is None:
+                raise SessionSendError(f"no session for {device_jid}")
+            state = deserialize(stored)
+            plaintext = signal_decrypt(state, ciphertext)
+            await self._store.put_session(device_jid, serialize(state))
+            return plaintext
+
+        wrapped = decode_prekey(ciphertext[1:])
+        signed = self._credentials.signed_pre_key
+        if wrapped.signed_pre_key_id != signed.key_id:
+            raise SessionSendError(
+                f"unknown signed prekey {wrapped.signed_pre_key_id} (have {signed.key_id})"
+            )
+        one_time = None
+        if wrapped.pre_key_id is not None:
+            blob = await self._store.consume_prekey(wrapped.pre_key_id)
+            if blob is None:
+                raise SessionSendError(f"one-time prekey {wrapped.pre_key_id} is gone")
+            one_time = KeyPair(private=blob[:32], public=blob[32:])
+
+        state = responder_session(
+            self._credentials.identity_key,
+            signed.key_pair,
+            signed_pre_key_id=signed.key_id,
+            their_identity=wrapped.identity_key,
+            their_base_key=wrapped.base_key,
+            our_one_time_pre_key=one_time,
+        )
+        plaintext = signal_decrypt(state, wrapped.message)
+        await self._store.put_session(device_jid, serialize(state))
+        return plaintext
 
 
 class StreamNodeSender:
