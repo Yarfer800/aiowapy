@@ -31,6 +31,7 @@ class Credentials:
 
 PEER = "492222222222@s.whatsapp.net"
 PEER_DEVICE = "492222222222:1@s.whatsapp.net"
+GROUP = "120363000000000001@g.us"
 
 
 class FakeServer:
@@ -74,7 +75,29 @@ class FakeServer:
     # -- server behaviour ---------------------------------------------------
 
     def _auto_respond(self, node: Node) -> None:
-        if node.tag == "iq" and node.attrs.get("xmlns") == "usync":
+        if node.tag == "iq" and node.attrs.get("xmlns") == "w:g2":
+            if node.attrs.get("type") == "get":
+                self.push(self._group_info(node))
+            else:
+                action = next(
+                    (
+                        item
+                        for item in node.content
+                        if item.tag in ("add", "remove", "promote", "demote")
+                    ),  # type: ignore[union-attr]
+                    None,
+                )
+                content = []
+                if action is not None:
+                    content = [Node(tag=action.tag, attrs={}, content=list(action.content or []))]
+                self.push(
+                    Node(
+                        tag="iq",
+                        attrs={"type": "result", "id": node.attrs.get("id", "")},
+                        content=content,
+                    )
+                )
+        elif node.tag == "iq" and node.attrs.get("xmlns") == "usync":
             self.push(self._device_list(node))
         elif (
             node.tag == "iq"
@@ -91,6 +114,24 @@ class FakeServer:
                     attrs={"id": node.attrs.get("id", ""), "class": "message"},
                 )
             )
+
+    def _group_info(self, node: Node) -> Node:
+        return Node(
+            tag="iq",
+            attrs={"type": "result", "id": node.attrs.get("id", "")},
+            content=[
+                Node(
+                    tag="group",
+                    attrs={"id": GROUP.split("@")[0], "subject": "Team"},
+                    content=[
+                        Node(tag="participant", attrs={"jid": PEER}),
+                        Node(
+                            tag="participant", attrs={"jid": ME.split(":")[0] + "@s.whatsapp.net"}
+                        ),
+                    ],
+                )
+            ],
+        )
 
     def _device_list(self, node: Node) -> Node:
         return Node(
@@ -439,5 +480,74 @@ async def test_double_connect_is_rejected(tmp_path: Path) -> None:
     try:
         with pytest.raises(ClientError):
             await client.connect()
+    finally:
+        await client.close()
+
+
+async def test_send_text_to_a_group_uses_sender_keys(tmp_path: Path) -> None:
+    client, server, _credentials = await connected_client(tmp_path)
+    try:
+        result = await client.send_text(GROUP, "hello group")
+        assert result.acked is True
+        node = server.nodes("message")[-1]
+        assert node.attrs["to"] == GROUP
+        assert node.attrs["phash"].startswith("2:")
+        kinds = [item.attrs["type"] for item in node.content]  # type: ignore[union-attr]
+        assert "skmsg" in kinds
+    finally:
+        await client.close()
+
+
+async def test_incoming_group_message_is_decrypted(tmp_path: Path) -> None:
+    from wapy.crypto.sender_key import SenderKeyState, distribution_message, encrypt
+    from wapy.protocol.messages import encode_sender_key_distribution, group_enc_node
+
+    client, server, credentials = await connected_client(tmp_path)
+    received: asyncio.Queue[MessageEvent] = asyncio.Queue()
+    try:
+        client.router.message()(received.put_nowait)
+
+        sender_state = SenderKeyState.create(key_id=5)
+        skdm = encode_sender_key_distribution(GROUP, distribution_message(sender_state))
+        peer = generate_keypair()
+        state = initiator_session(
+            peer,
+            credentials.account.identity_public,
+            credentials.account.signed_pre_key.key_pair.public,
+            credentials.one_time.public,
+            signed_pre_key_id=credentials.account.signed_pre_key.key_id,
+            pre_key_id=5,
+        )
+        envelope = prekey_message(state, signal_encrypt(state, skdm), registration_id=9)
+        server.push(
+            Node(
+                tag="message",
+                attrs={"id": "G-1", "from": GROUP, "participant": PEER, "t": "1700000001"},
+                content=[
+                    Node(
+                        tag="enc",
+                        attrs={"v": "2", "type": "pkmsg", "jid": PEER_DEVICE},
+                        content=envelope,
+                    ),
+                    group_enc_node(encrypt(sender_state, encode_text("group hello"))),
+                ],
+            )
+        )
+        event = await asyncio.wait_for(received.get(), timeout=5)
+        assert event.text == "group hello"
+        assert event.chat_jid == GROUP
+        assert event.sender_jid == PEER
+    finally:
+        await client.close()
+
+
+async def test_group_helpers_use_the_group_service(tmp_path: Path) -> None:
+    client, server, _credentials = await connected_client(tmp_path)
+    try:
+        info = await client.group_info(GROUP)
+        assert info.jid == GROUP
+        assert info.subject == "Team"
+        participants = await client.update_group_participants(GROUP, "add", [PEER])
+        assert [item.jid for item in participants] == [PEER]
     finally:
         await client.close()

@@ -23,6 +23,7 @@ from wapy.events import (
     ReceiptEvent,
 )
 from wapy.messaging.devices import CachedDeviceResolver
+from wapy.messaging.groups import GroupSender, GroupService, StoreSenderKeys
 from wapy.messaging.messenger import Messenger, SendResult
 from wapy.messaging.real import (
     StoreSignalSessionsWithDecrypt,
@@ -30,6 +31,7 @@ from wapy.messaging.real import (
     UsyncDeviceFetcher,
 )
 from wapy.messaging.receiving import DecryptError, MessageReceiver, ReceiveError
+from wapy.protocol.groups import GroupInfo, GroupParticipant
 from wapy.protocol.prekeys import pack_key_pair
 from wapy.protocol.presence import (
     PRESENCE_AVAILABLE,
@@ -138,6 +140,9 @@ class WhatsAppClient:
         self._credentials: DeviceCredentials | None = None
         self._messenger: Messenger | None = None
         self._receiver: MessageReceiver | None = None
+        self._groups: GroupService | None = None
+        self._group_sender: GroupSender | None = None
+        self._sender_keys: StoreSenderKeys | None = None
         self._session: ClientSession | None = None
 
         self._ready = asyncio.Event()
@@ -277,8 +282,21 @@ class WhatsAppClient:
         self._stream = stream
         self._credentials = state.credentials
         self._messenger = self._build_messenger(stream, state)
+        if self._store is None:  # pragma: no cover - guarded by connect()
+            raise ClientError("the session file is not open")
+        self._sender_keys = StoreSenderKeys(self._store, state.jid or "")
+        self._groups = GroupService(stream, self._store)
+        self._group_sender = GroupSender(
+            StreamNodeSender(stream),
+            self._build_resolver(stream, state),
+            StoreSignalSessionsWithDecrypt(self._store, state.credentials),
+            self._sender_keys,
+            self._groups,
+            ack_timeout=self._ack_timeout,
+        )
         self._receiver = MessageReceiver(
-            StoreSignalSessionsWithDecrypt(self._store, state.credentials)  # type: ignore[arg-type]
+            StoreSignalSessionsWithDecrypt(self._store, state.credentials),
+            self._sender_keys,
         )
         self.info = ClientInfo(jid=state.jid or "", lid=state.lid, push_name=self.push_name)
         stream.on_node(self._enqueue)
@@ -298,12 +316,15 @@ class WhatsAppClient:
             self._worker = self._keepalive = None
             self._ready.clear()
 
+    def _build_resolver(self, stream: NodeStream, state: SessionState) -> CachedDeviceResolver:
+        fetcher = UsyncDeviceFetcher(stream, state.credentials, own_jid=state.jid)
+        return CachedDeviceResolver(fetcher)
+
     def _build_messenger(self, stream: NodeStream, state: SessionState) -> Messenger:
         assert self._store is not None
-        fetcher = UsyncDeviceFetcher(stream, state.credentials, own_jid=state.jid)
         return Messenger(
             StreamNodeSender(stream),
-            CachedDeviceResolver(fetcher),
+            self._build_resolver(stream, state),
             StoreSignalSessionsWithDecrypt(self._store, state.credentials),
             ack_timeout=self._ack_timeout,
         )
@@ -339,10 +360,54 @@ class WhatsAppClient:
     async def send_text(self, jid: str, text: str, *, wait_for_message: bool = True) -> SendResult:
         if not text:
             raise ClientError("text must not be empty")
+        if jid.endswith("@g.us"):
+            return await self.send_group_text(jid, text, wait_for_message=wait_for_message)
         messenger = self._require_messenger()
         return await self._send_with_outbox(
             messenger, jid, _encode_text_payload(text), wait_for_message=wait_for_message
         )
+
+    async def send_group_text(
+        self, group_jid: str, text: str, *, wait_for_message: bool = True
+    ) -> SendResult:
+        if not text:
+            raise ClientError("text must not be empty")
+        sender = self._group_sender
+        if sender is None:
+            raise ClientError("the client is not connected")
+        payload = _encode_text_payload(text)
+        result = await sender.send_payload(group_jid, payload, wait_for_message=wait_for_message)
+        self._remember(result.message_id, group_jid, payload)
+        return result
+
+    # ---------------------------------------------------------------------- groups
+
+    async def group_info(self, group_jid: str, *, refresh: bool = False) -> GroupInfo:
+        if self._groups is None:
+            raise ClientError("the client is not connected")
+        return await self._groups.info(group_jid, refresh=refresh)
+
+    async def joined_groups(self) -> list[GroupInfo]:
+        if self._groups is None:
+            raise ClientError("the client is not connected")
+        return await self._groups.joined()
+
+    async def create_group(self, subject: str, participants: list[str]) -> str:
+        if self._groups is None:
+            raise ClientError("the client is not connected")
+        return await self._groups.create(subject, participants)
+
+    async def update_group_participants(
+        self, group_jid: str, action: str, participants: list[str]
+    ) -> list[GroupParticipant]:
+        if self._groups is None:
+            raise ClientError("the client is not connected")
+        return await self._groups.update_participants(group_jid, action, participants)
+
+    async def leave_group(self, group_jid: str) -> None:
+        if self._groups is None:
+            raise ClientError("the client is not connected")
+        await self._groups.leave(group_jid)
 
     async def _send_with_outbox(
         self, messenger: Messenger, jid: str, payload: bytes, *, wait_for_message: bool
@@ -433,6 +498,14 @@ class WhatsAppClient:
             return
         except ReceiveError:
             logger.debug("ignoring unusable message node %s", node.attrs.get("id"))
+            return
+
+        if (
+            received.text is None
+            and received.media is None
+            and received.parsed is not None
+            and received.parsed.sender_key_distribution
+        ):
             return
 
         if self._auto_receipts:
@@ -548,8 +621,14 @@ class WhatsAppClient:
         if stored is None:
             logger.info("retry request for an unknown message %s", message_id)
             return
-        user = sender_jid.split("@", 1)[0].split(":", 1)[0]
-        await self._require_store().delete_sessions_for_user(user)
+        if chat_jid.endswith("@g.us"):
+            sender_keys = self._sender_keys
+            if sender_keys is not None and self.info is not None:
+                await sender_keys.forget(chat_jid, self.info.jid)
+            await self._require_store().delete_sender_keys_for_group(chat_jid)
+        else:
+            user = sender_jid.split("@", 1)[0].split(":", 1)[0]
+            await self._require_store().delete_sessions_for_user(user)
         messenger = self._require_messenger()
         messenger.invalidate(chat_jid)
         logger.info("resending %s to %s after a retry request", message_id, chat_jid)

@@ -15,7 +15,7 @@ import aiosqlite
 
 from wapy.errors import StoreError, StoreNotOpenError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 _PRAGMAS = (
@@ -269,6 +269,57 @@ class SessionStore:
                 "ON CONFLICT(jid) DO UPDATE SET key = excluded.key, trust = excluded.trust",
                 (jid, key, trust),
             )
+
+    async def get_sender_key(self, group_jid: str, sender: str) -> bytes | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT record FROM sender_keys WHERE group_jid = ? AND sender = ?",
+                (group_jid, sender),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else bytes(row["record"])
+
+    async def put_sender_key(self, group_jid: str, sender: str, record: bytes) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO sender_keys (group_jid, sender, record) VALUES (?, ?, ?) "
+                "ON CONFLICT(group_jid, sender) DO UPDATE SET record = excluded.record",
+                (group_jid, sender, record),
+            )
+
+    async def delete_sender_key(self, group_jid: str, sender: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "DELETE FROM sender_keys WHERE group_jid = ? AND sender = ?",
+                (group_jid, sender),
+            )
+
+    async def delete_sender_keys_for_group(self, group_jid: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute("DELETE FROM sender_keys WHERE group_jid = ?", (group_jid,))
+
+    async def get_group(self, jid: str) -> tuple[bytes, float] | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT record, fetched FROM groups WHERE jid = ?", (jid,))
+            row = await cursor.fetchone()
+            await cursor.close()
+        if row is None:
+            return None
+        return bytes(row["record"]), float(row["fetched"])
+
+    async def put_group(self, jid: str, record: bytes, fetched: float) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO groups (jid, record, fetched) VALUES (?, ?, ?) "
+                "ON CONFLICT(jid) DO UPDATE SET record = excluded.record, "
+                "fetched = excluded.fetched",
+                (jid, record, fetched),
+            )
+
+    async def delete_group(self, jid: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute("DELETE FROM groups WHERE jid = ?", (jid,))
 
     async def get_app_state_key(self, key_id: bytes) -> bytes | None:
         async with self._tx(write=False) as conn:
