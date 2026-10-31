@@ -291,11 +291,16 @@ class ClientSession:
                 return "connected"
             if node.tag == "failure":
                 reason = _reason_code(node)
-                # A paired session that suddenly cannot log in means the device was
-                # unlinked or never activated: drop the account and pair again.
                 if state.paired and reason in STREAM_ERROR_LOGGED_OUT | {405}:
+                    # The device was never activated. Re-pairing automatically would
+                    # burn pairing refs and spam QR codes, so stop and say so: the
+                    # account is dropped here, the next run starts from a fresh QR.
                     await self._forget_me(store, state)
-                    return "restart"
+                    raise SessionError(
+                        "device is not activated on the server "
+                        f"(reason {reason}). The session was reset; run pairing again "
+                        "once WhatsApp stops rate-limiting device linking."
+                    )
                 raise SessionError(f"connection refused: {node.attrs} (paired={state.paired})")
 
     async def _ensure_prekeys(

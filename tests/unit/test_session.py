@@ -315,23 +315,22 @@ async def test_pairing_reply_is_addressed_to_the_whatsapp_server(session_path: P
     assert any(node.tag == "ib" for node in transport.sent)
 
 
-async def test_failure_401_on_paired_session_falls_back_to_pairing(session_path: Path) -> None:
+async def test_failure_401_on_paired_session_is_reported(session_path: Path) -> None:
     credentials = generate_credentials()
     async with SessionStore(session_path) as store:
         await store.save_creds({**credentials.to_dict(), "me": {"id": "1:2@s.whatsapp.net"}})
 
-    ScriptedTransport.scripts = [
-        [Node(tag="failure", attrs={"reason": "401"})],
-        [pair_device_node(["2@a"]), stream_error_node(515)],
-    ]
+    ScriptedTransport.scripts = [[Node(tag="failure", attrs={"reason": "401"})]]
     ScriptedTransport.handshakes = []
     ScriptedTransport.instances = []
     session = ClientSession(
         session_path, transport_factory=ScriptedTransport, qr_callback=lambda item: None
     )
-    await asyncio.wait_for(session.run(), timeout=20)
+    with pytest.raises(SessionError):
+        await asyncio.wait_for(session.run(), timeout=10)
 
-    assert 19 in parse_fields(ScriptedTransport.handshakes[1])  # back to registration
+    # exactly one attempt: no QR storm after a failed activation
+    assert len(ScriptedTransport.handshakes) == 1
     async with SessionStore(session_path) as store:
         stored = await store.load_creds()
     assert stored is not None and "me" not in stored
