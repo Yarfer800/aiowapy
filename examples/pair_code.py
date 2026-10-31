@@ -30,10 +30,24 @@ async def main() -> int:
     print(f"code: {code}")
     print("WhatsApp -> Linked devices -> Link with phone number -> type the code\n")
 
+    def show(node: object) -> None:
+        tag = getattr(node, "tag", "?")
+        attrs = getattr(node, "attrs", {})
+        print(f"  <- {tag} {attrs}", flush=True)
+        content = getattr(node, "content", None)
+        if tag == "notification" and isinstance(content, list):
+            for item in content:
+                body = item.content
+                if isinstance(body, bytes):
+                    detail = f"{len(body)}B {body[:24].hex()}"
+                else:
+                    detail = "nested" if isinstance(body, list) else repr(body)
+                print(f"       child {item.tag} {item.attrs} {detail}", flush=True)
+
     session = ClientSession(
         session_path,
         transport_factory=lambda: WhatsAppTransport(proxy=proxy, timeout=25),
-        node_observer=lambda node: print(f"  <- {node.tag} {node.attrs}", flush=True),
+        node_observer=show,
     )
     state = await session.pair_with_phone_number(phone, code)
     if state.jid:
