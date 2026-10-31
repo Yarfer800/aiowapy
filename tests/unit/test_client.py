@@ -634,3 +634,55 @@ async def test_group_helpers_use_the_group_service(tmp_path: Path) -> None:
         assert [item.jid for item in participants] == [PEER]
     finally:
         await client.close()
+
+
+async def test_app_state_keys_are_stored_and_synced(tmp_path: Path) -> None:
+    from wapy.crypto.primitives import hkdf
+    from wapy.pb import bytes_field, message_field, varint_field
+    from wapy.protocol.appstate import expand_keys
+
+    client, server, credentials = await connected_client(tmp_path)
+    try:
+        key_id = b"\x09\x08\x07\x06"
+        key_data = bytes(range(32))
+        share = message_field(
+            1,
+            bytes_field(1, bytes_field(1, key_id)) + bytes_field(2, bytes_field(1, key_data)),
+        )
+        protocol = varint_field(2, 6) + bytes_field(7, share)
+        payload = message_field(12, protocol)
+
+        peer = generate_keypair()
+        state = initiator_session(
+            peer,
+            credentials.account.identity_public,
+            credentials.account.signed_pre_key.key_pair.public,
+            credentials.one_time.public,
+            signed_pre_key_id=credentials.account.signed_pre_key.key_id,
+            pre_key_id=5,
+        )
+        envelope = prekey_message(state, signal_encrypt(state, payload), registration_id=9)
+        server.push(
+            Node(
+                tag="message",
+                attrs={"id": "KEY-1", "from": PEER, "t": "1"},
+                content=[
+                    Node(
+                        tag="enc",
+                        attrs={"v": "2", "type": "pkmsg", "jid": PEER_DEVICE},
+                        content=envelope,
+                    )
+                ],
+            )
+        )
+        for _ in range(100):
+            if client._store is not None:
+                stored = await client._store.get_app_state_key(key_id)
+                if stored == key_data:
+                    break
+            await asyncio.sleep(0.01)
+        assert client._store is not None
+        assert await client._store.get_app_state_key(key_id) == key_data
+        assert expand_keys(key_data).value_mac != hkdf(key_data, 32, b"x")
+    finally:
+        await client.close()

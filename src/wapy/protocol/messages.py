@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from wapy.errors import WapyError
 from wapy.pb import (
+    ProtobufError,
     bytes_field,
     first_bytes,
     first_int,
@@ -27,6 +28,10 @@ from wapy.protocol.wabinary import Node
 FIELD_CONVERSATION = 1
 FIELD_SKDM = 2
 FIELD_EXTENDED_TEXT = 6
+FIELD_PROTOCOL = 12
+PROTOCOL_FIELD_TYPE = 2
+PROTOCOL_FIELD_KEY_SHARE = 7
+PROTOCOL_APP_STATE_KEY_SHARE = 6
 
 
 class MessageError(WapyError):
@@ -152,6 +157,7 @@ class ParsedMessage:
     media: MediaInfo | None = None
     sender_key_distribution: bytes | None = None
     sender_key_group: str | None = None
+    app_state_keys: tuple[tuple[bytes, bytes], ...] = ()
 
 
 _MEDIA_FIELDS = {
@@ -173,6 +179,15 @@ def parse_message(payload: bytes) -> ParsedMessage:
         text = first_bytes(parse_fields(first_bytes(fields, FIELD_EXTENDED_TEXT)), 1)
         if text:
             return ParsedMessage(text=text.decode("utf-8", errors="replace"))
+
+    protocol = _maybe_bytes(fields, FIELD_PROTOCOL)
+    if protocol:
+        try:
+            keys = _app_state_keys(protocol)
+        except ProtobufError:
+            keys = ()
+        if keys:
+            return ParsedMessage(app_state_keys=keys)
 
     raw_skdm = _maybe_bytes(fields, FIELD_SKDM)
     if raw_skdm:
@@ -264,6 +279,28 @@ def _parse_media_body(body: bytes, media_type: str) -> MediaInfo:
         height=first_int(fields, 6) or None,
         media_key_timestamp=first_int(fields, 10) or None,
     )
+
+
+def _app_state_keys(protocol: bytes) -> tuple[tuple[bytes, bytes], ...]:
+    """App state sync keys the phone shares through a protocol message."""
+    inner = parse_fields(protocol)
+    if first_int(inner, PROTOCOL_FIELD_TYPE) != PROTOCOL_APP_STATE_KEY_SHARE:
+        return ()
+    share = _maybe_bytes(inner, PROTOCOL_FIELD_KEY_SHARE)
+    if not share:
+        return ()
+    result: list[tuple[bytes, bytes]] = []
+    for raw_key in _all_bytes(parse_fields(share), 1):
+        key = parse_fields(raw_key)
+        key_id = _maybe_bytes(parse_fields(_maybe_bytes(key, 1) or b""), 1)
+        key_value = _maybe_bytes(parse_fields(_maybe_bytes(key, 2) or b""), 1)
+        if key_id and key_value:
+            result.append((key_id, key_value))
+    return tuple(result)
+
+
+def _all_bytes(fields: dict[int, list[object]], number: int) -> list[bytes]:
+    return [item for item in fields.get(number, []) if isinstance(item, bytes)]
 
 
 def _maybe_bytes(fields: dict[int, list[object]], number: int) -> bytes | None:

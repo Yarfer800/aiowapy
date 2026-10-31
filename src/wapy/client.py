@@ -22,6 +22,7 @@ from wapy.events import (
     PresenceEvent,
     ReceiptEvent,
 )
+from wapy.messaging.appstate import AppStateSync, SyncedCollection
 from wapy.messaging.devices import CachedDeviceResolver
 from wapy.messaging.groups import GroupSender, GroupService, StoreSenderKeys
 from wapy.messaging.media import MediaStorage, MediaTransport, UrllibMediaTransport
@@ -155,6 +156,7 @@ class WhatsAppClient:
         self._group_sender: GroupSender | None = None
         self._sender_keys: StoreSenderKeys | None = None
         self._media: MediaStorage | None = None
+        self._app_state: AppStateSync | None = None
         self._media_transport: MediaTransport = media_transport or UrllibMediaTransport()
         self._session: ClientSession | None = None
 
@@ -300,6 +302,7 @@ class WhatsAppClient:
         self._sender_keys = StoreSenderKeys(self._store, state.jid or "")
         self._groups = GroupService(stream, self._store)
         self._media = MediaStorage(stream, self._media_transport)
+        self._app_state = AppStateSync(stream, self._store)
         self._group_sender = GroupSender(
             StreamNodeSender(stream),
             self._build_resolver(stream, state),
@@ -507,6 +510,35 @@ class WhatsAppClient:
         """Fetch and decrypt an attachment announced by a `MessageEvent`."""
         return await self._require_media().download(media)
 
+    # ------------------------------------------------------------------- app state
+
+    async def sync_app_state(self) -> list[SyncedCollection]:
+        """Pull app state patches (contacts, mutes, pins, ...) for every collection.
+
+        Requires sync keys, which WhatsApp shares from the phone; without them the
+        call raises and the local copy stays as it is.
+        """
+        if self._app_state is None:
+            raise ClientError("the client is not connected")
+        return await self._app_state.sync_all()
+
+    async def app_state_entries(self, collection: str) -> list[tuple[str, bytes, int]]:
+        if self._app_state is None:
+            raise ClientError("the client is not connected")
+        return await self._app_state.entries(collection)
+
+    async def mute_chat(self, chat_jid: str, muted: bool) -> int:
+        return await self._require_app_state().mute(chat_jid, muted)
+
+    async def pin_chat(self, chat_jid: str, pinned: bool) -> int:
+        return await self._require_app_state().pin(chat_jid, pinned)
+
+    async def mark_chat_read(self, chat_jid: str, read: bool = True) -> int:
+        return await self._require_app_state().mark_chat_read(chat_jid, read)
+
+    async def set_push_name(self, name: str) -> int:
+        return await self._require_app_state().set_push_name(name)
+
     # ---------------------------------------------------------------------- groups
 
     async def group_info(self, group_jid: str, *, refresh: bool = False) -> GroupInfo:
@@ -650,6 +682,10 @@ class WhatsAppClient:
             logger.debug("ignoring unusable message node %s", node.attrs.get("id"))
             return
 
+        if received.parsed is not None and received.parsed.app_state_keys:
+            await self._accept_app_state_keys(received.parsed.app_state_keys)
+            return
+
         if (
             received.text is None
             and received.media is None
@@ -693,6 +729,25 @@ class WhatsAppClient:
                 raw=node,
             )
         )
+
+    async def _accept_app_state_keys(self, keys: tuple[tuple[bytes, bytes], ...]) -> None:
+        store = self._require_store()
+        for key_id, key_data in keys:
+            await store.put_app_state_key(key_id, key_data)
+        logger.info("stored %d app state keys", len(keys))
+        if self._app_state is not None:
+            task = asyncio.get_running_loop().create_task(
+                self._sync_app_state_quietly(), name="wapy-app-state-sync"
+            )
+            self._track(task)
+
+    async def _sync_app_state_quietly(self) -> None:
+        try:
+            await self._require_app_state().sync_all()
+        except Exception as exc:
+            # A missing or rejected patch must not take the connection down: the
+            # local copy simply stays where it was.
+            logger.warning("app state sync failed: %s", exc)
 
     async def _handle_notification(self, node: Node) -> None:
         if child(node, "encrypt") is not None:
@@ -817,6 +872,11 @@ class WhatsAppClient:
         if self._credentials is None:
             raise ClientError("the client is not connected")
         return self._credentials
+
+    def _require_app_state(self) -> AppStateSync:
+        if self._app_state is None:
+            raise ClientError("the client is not connected")
+        return self._app_state
 
     def _require_media(self) -> MediaStorage:
         if self._media is None:

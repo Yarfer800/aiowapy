@@ -15,7 +15,7 @@ import aiosqlite
 
 from wapy.errors import StoreError, StoreNotOpenError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 _PRAGMAS = (
@@ -348,6 +348,56 @@ class SessionStore:
         if row is None:
             return None
         return int(row["version"]), bytes(row["hash"])
+
+    async def latest_app_state_key_id(self) -> bytes | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT key_id FROM app_state_keys ORDER BY rowid DESC LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else bytes(row["key_id"])
+
+    async def put_app_state(
+        self, collection: str, index_json: str, value: bytes, timestamp: int, value_mac: bytes
+    ) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO app_state_data (collection, index_json, value, timestamp, value_mac) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(collection, index_json) DO UPDATE SET value = excluded.value, "
+                "timestamp = excluded.timestamp, value_mac = excluded.value_mac",
+                (collection, index_json, value, timestamp, value_mac),
+            )
+
+    async def delete_app_state(self, collection: str, index_json: str) -> bytes | None:
+        async with self._tx(write=True) as conn:
+            cursor = await conn.execute(
+                "SELECT value_mac FROM app_state_data WHERE collection = ? AND index_json = ?",
+                (collection, index_json),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+            if row is None:
+                return None
+            await conn.execute(
+                "DELETE FROM app_state_data WHERE collection = ? AND index_json = ?",
+                (collection, index_json),
+            )
+            return bytes(row["value_mac"])
+
+    async def list_app_state(self, collection: str) -> list[tuple[str, bytes, int]]:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT index_json, value, timestamp FROM app_state_data "
+                "WHERE collection = ? ORDER BY timestamp",
+                (collection,),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [
+            (str(row["index_json"]), bytes(row["value"]), int(row["timestamp"])) for row in rows
+        ]
 
     async def set_app_state_version(self, name: str, version: int, digest: bytes) -> None:
         async with self._tx(write=True) as conn:
