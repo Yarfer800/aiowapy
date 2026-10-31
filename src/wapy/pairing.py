@@ -9,6 +9,8 @@ key material is what makes the string long enough to need QR versions 5-10.
 from __future__ import annotations
 
 import base64
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from typing import Final
 
 from wapy.creds import DeviceCredentials
@@ -84,3 +86,73 @@ def pairing_qr(
         platform=platform,
     )
     return payload, encode(payload, level=level)
+
+
+QR_FIRST_TTL = 60
+QR_NEXT_TTL = 20
+
+
+@dataclass(frozen=True, slots=True)
+class PairingQr:
+    """One QR to show. `ttl` is how long the caller may keep it on screen."""
+
+    payload: str
+    qr: QrCode
+    ttl: int
+
+
+class PairingQrSource:
+    """Rotate through the server-issued pairing refs.
+
+    The server sends a batch of refs in the `pair-device` node; each one is a
+    short-lived routing token, so the client shows them one by one on a timer.
+    The timing is a client policy: 60 s for the first QR, 20 s for the rest,
+    matching the official web client.
+
+    Nothing here sleeps — the caller owns the clock. `next()` returns None when
+    the batch is exhausted, which is a terminal condition: fresh refs require a
+    new connection.
+    """
+
+    def __init__(
+        self,
+        credentials: DeviceCredentials,
+        refs: Iterable[str],
+        *,
+        platform: str = "chrome",
+        level: str = "M",
+        first_ttl: int = QR_FIRST_TTL,
+        next_ttl: int = QR_NEXT_TTL,
+    ) -> None:
+        self._refs = list(refs)
+        if not self._refs:
+            raise PairingQrError("the server issued no pairing refs")
+        self._credentials = credentials
+        self._platform = platform
+        self._level = level
+        self._first_ttl = first_ttl
+        self._next_ttl = next_ttl
+        self._index = 0
+
+    def __len__(self) -> int:
+        return len(self._refs)
+
+    @property
+    def remaining(self) -> int:
+        return len(self._refs) - self._index
+
+    def next(self) -> PairingQr | None:
+        if self._index >= len(self._refs):
+            return None
+        ref = self._refs[self._index]
+        ttl = self._first_ttl if self._index == 0 else self._next_ttl
+        self._index += 1
+        payload, qr = pairing_qr(ref, self._credentials, platform=self._platform, level=self._level)
+        return PairingQr(payload=payload, qr=qr, ttl=ttl)
+
+    def __iter__(self) -> Iterator[PairingQr]:
+        while True:
+            item = self.next()
+            if item is None:
+                return
+            yield item
