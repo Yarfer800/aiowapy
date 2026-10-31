@@ -54,10 +54,7 @@ def main() -> int:
                 kind = "text" if message.is_text else "binary"
                 payload = message.content
                 shown = payload if args.max_bytes <= 0 else payload[: args.max_bytes]
-                if args.hex:
-                    body = shown.hex()
-                else:
-                    body = shown.decode("utf-8", errors="replace")
+                body = shown.hex() if args.hex else shown.decode("utf-8", errors="replace")
                 body = body.replace("\n", "\\n")
                 print(f"  {direction} {kind} {len(payload)}B  {body}")
 

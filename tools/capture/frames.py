@@ -88,7 +88,8 @@ def render(fields: list[tuple[int, str, object]], indent: int = 0) -> list[str]:
         elif kind == "bytes":
             raw = value  # type: ignore[assignment]
             preview = raw[:16].hex()
-            lines.append(f"{pad}field {number} (bytes, {len(raw)}B): {preview}{'...' if len(raw) > 16 else ''}")
+            ellipsis = "..." if len(raw) > 16 else ""
+            lines.append(f"{pad}field {number} (bytes, {len(raw)}B): {preview}{ellipsis}")
         else:
             lines.append(f"{pad}field {number} ({kind}): {value}")
     return lines
@@ -118,7 +119,9 @@ def main() -> int:
         return 1
 
     with args.path.open("rb") as handle:
-        flows = [flow for flow in io.FlowReader(handle).stream() if getattr(flow, "websocket", None)]
+        flows = [
+            flow for flow in io.FlowReader(handle).stream() if getattr(flow, "websocket", None)
+        ]
 
     for flow in flows:
         print(f"\n=== {flow.request.pretty_url} (frames={len(flow.websocket.messages)})")
