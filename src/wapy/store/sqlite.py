@@ -249,6 +249,12 @@ class SessionStore:
         async with self._tx(write=True) as conn:
             await conn.execute("DELETE FROM sessions WHERE jid = ?", (jid,))
 
+    async def delete_sessions_for_user(self, user: str) -> None:
+        """Drop every device session of one account, e.g. after a retry request."""
+        async with self._tx(write=True) as conn:
+            await conn.execute("DELETE FROM sessions WHERE jid LIKE ?", (f"{user}:%",))
+            await conn.execute("DELETE FROM sessions WHERE jid = ?", (user,))
+
     async def get_identity(self, jid: str) -> bytes | None:
         async with self._tx(write=False) as conn:
             cursor = await conn.execute("SELECT key FROM identity_keys WHERE jid = ?", (jid,))

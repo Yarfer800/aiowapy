@@ -11,9 +11,12 @@ one-time prekey, because the sender's session with us is clearly broken.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from wapy.creds import SIGNAL_KEY_PREFIX, DeviceCredentials
 from wapy.errors import WapyError
 from wapy.protocol.prekeys import prekey_node, signed_prekey_node
+from wapy.protocol.stream import child, children
 from wapy.protocol.wabinary import Node
 
 RECEIPT_DELIVERY = "delivery"
@@ -102,3 +105,60 @@ def build_retry_receipt(
             )
         )
     return Node(tag="receipt", attrs=attrs, content=content)
+
+
+@dataclass(frozen=True, slots=True)
+class IncomingReceipt:
+    """A receipt we received: delivery/read confirmation, or a retry request."""
+
+    chat_jid: str
+    sender_jid: str
+    message_ids: tuple[str, ...]
+    receipt_type: str
+    timestamp: int | None = None
+    retry_count: int | None = None
+    retry_id: str | None = None
+    is_group: bool = False
+
+
+def parse_receipt(node: Node) -> IncomingReceipt | None:
+    """Decode a `<receipt>` node; None when it is not one or carries no id."""
+    if node.tag != "receipt":
+        return None
+    chat_jid = node.attrs.get("from", "")
+    main_id = node.attrs.get("id", "")
+    if not chat_jid or not main_id:
+        return None
+
+    ids = [main_id]
+    listing = child(node, "list")
+    if listing is not None:
+        ids = [
+            item.attrs["id"] for item in children(listing, "item") if item.attrs.get("id")
+        ] or ids
+
+    timestamp: int | None = None
+    try:
+        timestamp = int(node.attrs["t"]) if node.attrs.get("t") else None
+    except ValueError:
+        timestamp = None
+
+    retry = child(node, "retry")
+    retry_count: int | None = None
+    if retry is not None:
+        try:
+            retry_count = int(retry.attrs.get("count", "1"))
+        except ValueError:
+            retry_count = 1
+
+    participant = node.attrs.get("participant")
+    return IncomingReceipt(
+        chat_jid=chat_jid,
+        sender_jid=participant or chat_jid,
+        message_ids=tuple(ids),
+        receipt_type=node.attrs.get("type", ""),
+        timestamp=timestamp,
+        retry_count=retry_count,
+        retry_id=retry.attrs.get("id") if retry is not None else None,
+        is_group=chat_jid.endswith("@g.us"),
+    )

@@ -12,7 +12,8 @@ from dataclasses import dataclass
 
 from wapy.errors import WapyError
 from wapy.messaging.signals import SignalSessions
-from wapy.protocol.messages import IncomingMessage, decode_text, parse_incoming
+from wapy.protocol.media import MediaInfo
+from wapy.protocol.messages import IncomingMessage, ParsedMessage, parse_incoming, parse_message
 from wapy.protocol.wabinary import Node
 
 
@@ -36,6 +37,9 @@ class ReceivedMessage:
     device_jid: str
     text: str | None
     prekey: bool
+    media: MediaInfo | None = None
+    timestamp: int | None = None
+    parsed: ParsedMessage | None = None
 
 
 class MessageReceiver:
@@ -56,12 +60,16 @@ class MessageReceiver:
             except Exception:
                 failures.append(device.device_jid)
                 continue
+            parsed = parse_message(plaintext)
             return ReceivedMessage(
                 chat_jid=incoming.from_jid,
-                sender_jid=incoming.from_jid,
+                sender_jid=incoming.participant or incoming.from_jid,
                 message_id=incoming.message_id,
                 device_jid=device.device_jid,
-                text=decode_text(plaintext),
+                text=parsed.text,
                 prekey=device.prekey,
+                media=parsed.media,
+                timestamp=incoming.timestamp,
+                parsed=parsed,
             )
         raise DecryptError("could not decrypt any payload", devices=failures)

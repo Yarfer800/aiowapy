@@ -73,7 +73,11 @@ class Messenger:
         self._new_id = id_factory or _default_message_id
 
     async def send_text(self, jid: str, text: str, *, wait_for_message: bool = True) -> SendResult:
-        payload = encode_text(text)
+        return await self.send_payload(jid, encode_text(text), wait_for_message=wait_for_message)
+
+    async def send_payload(
+        self, jid: str, payload: bytes, *, wait_for_message: bool = True
+    ) -> SendResult:
         devices = await self._devices.devices(jid)
         if not devices:
             raise MessagingError(f"no devices known for {jid}")
@@ -90,6 +94,12 @@ class Messenger:
         if wait_for_message:
             acked = await self._sender.wait_for_ack(message_id, timeout=self._ack_timeout)
         return SendResult(message_id=message_id, sent=sent, failed=failed, acked=acked)
+
+    def invalidate(self, jid: str) -> None:
+        """Forget the cached device list of a recipient."""
+        invalidate = getattr(self._devices, "invalidate", None)
+        if invalidate is not None:
+            invalidate(jid)
 
     async def _encrypt_for(
         self, devices: list[DeviceInfo], payload: bytes

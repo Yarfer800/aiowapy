@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Protocol
 
 from wapy.creds import DeviceCredentials, generate_credentials
-from wapy.crypto.primitives import generate_keypair
+from wapy.crypto.primitives import KeyPair, generate_keypair
 from wapy.errors import WapyError
 from wapy.pairing import PairingQr, PairingQrSource
 from wapy.protocol.client_payload import build_login_payload, build_registration_payload
@@ -45,7 +45,7 @@ from wapy.protocol.prekeys import (
     prekeys_to_upload,
     unpack_public,
 )
-from wapy.protocol.stream import child, children
+from wapy.protocol.stream import EncryptedTransport, child, children
 from wapy.protocol.wabinary import Node, decode_node, encode_node
 from wapy.store import SessionStore
 
@@ -111,14 +111,18 @@ class SessionError(WapyError):
     """The session could not be established."""
 
 
-class Transport(Protocol):
+class LoggedOutError(SessionError):
+    """The device was rejected by the server and cannot be reused."""
+
+
+class Transport(EncryptedTransport, Protocol):
     async def connect(self) -> None: ...
+
     async def close(self) -> None: ...
+
     async def handshake(
-        self, key_pair: object = None, client_payload: bytes = b"", **kwargs: object
+        self, key_pair: KeyPair | None = None, client_payload: bytes = b""
     ) -> object: ...
-    async def send_encrypted(self, payload: bytes) -> None: ...
-    async def recv_encrypted(self) -> bytes: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +175,9 @@ class ClientSession:
         platform: str = "chrome",
         version: tuple[int, int, int] = DEFAULT_VERSION,
         max_attempts: int = 4,
+        store: SessionStore | None = None,
+        on_connected: Callable[[Transport, SessionState], Awaitable[None]] | None = None,
+        reauthenticate: bool = True,
     ) -> None:
         self._path = Path(path)
         self._factory = transport_factory
@@ -180,21 +187,35 @@ class ClientSession:
         self._platform = platform
         self._version = version
         self._max_attempts = max_attempts
+        self._store = store
+        self._on_connected = on_connected
+        self._reauthenticate = reauthenticate
         self._last_recv = 0.0
 
     async def run(self) -> SessionState:
+        """Connect, pair if needed, and serve until the connection ends.
+
+        With `on_connected` the caller takes over the transport once the login is
+        accepted: the hook runs the live loop and the session returns when it ends,
+        which is how `WhatsAppClient` reconnects without owning the pairing flow.
+        """
+        if self._store is not None:
+            return await self._run_with(self._store)
         async with SessionStore(self._path) as store:
-            state = await self._load_state(store)
-            for _attempt in range(self._max_attempts):
-                outcome = await self._attempt(state, store)
-                if outcome == "restart":
-                    continue
-                if outcome == "paired":
-                    state.paired = True
-                    continue
-                return state
-                # pragma: no cover - loop always returns or continues
-            raise SessionError(f"gave up after {self._max_attempts} attempts")
+            return await self._run_with(store)
+
+    async def _run_with(self, store: SessionStore) -> SessionState:
+        state = await self._load_state(store)
+        for _attempt in range(self._max_attempts):
+            outcome = await self._attempt(state, store)
+            if outcome == "restart":
+                continue
+            if outcome == "paired":
+                state.paired = True
+                continue
+            return state
+            # pragma: no cover - loop always returns or continues
+        raise SessionError(f"gave up after {self._max_attempts} attempts")
 
     async def _load_state(self, store: SessionStore) -> SessionState:
         raw = await store.load_creds()
@@ -216,15 +237,22 @@ class ClientSession:
     async def _attempt(self, state: SessionState, store: SessionStore) -> str:
         transport = self._factory()
         await transport.connect()
-        keepalive = asyncio.create_task(self._keepalive_loop(transport))
+        # With an on_connected hook the caller owns the live connection, including
+        # its keepalive: two loops pinging one socket would fight over the reads.
+        keepalive = (
+            None
+            if self._on_connected is not None
+            else asyncio.create_task(self._keepalive_loop(transport))
+        )
         try:
             await transport.handshake(client_payload=self._payload(state))
             self._last_recv = time.monotonic()
             return await self._serve(transport, state, store)
         finally:
-            keepalive.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await keepalive
+            if keepalive is not None:
+                keepalive.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await keepalive
             await transport.close()
 
     async def _keepalive_loop(self, transport: Transport) -> None:
@@ -417,9 +445,15 @@ class ClientSession:
             node = decode_node(frame)
             if self._observer is not None:
                 self._observer(node)
+            await self._ack_server_request(transport, node)
             error = parse_stream_error(node)
             if error is not None:
                 if error.code in STREAM_ERROR_LOGGED_OUT:
+                    if state.paired and not self._reauthenticate:
+                        await self._forget_me(store, state)
+                        raise LoggedOutError(
+                            f"session rejected by the server: {error.code} {error.text}"
+                        )
                     if state.paired:
                         await self._forget_me(store, state)
                         return "restart"
@@ -460,6 +494,8 @@ class ClientSession:
             if node.tag == "success":
                 await self._store_me(store, state)
                 await self._ensure_prekeys(transport, state, store)
+                if self._on_connected is not None:
+                    await self._on_connected(transport, state)
                 return "connected"
             if node.tag == "failure":
                 reason = _reason_code(node)
