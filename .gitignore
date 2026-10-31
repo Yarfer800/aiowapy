@@ -36,6 +36,9 @@ node_modules/
 keys.log
 /flows*
 
+# Local-only debugging tools (kept on disk, never committed)
+/tools/capture/
+
 # Local scratch
 /tmp/
 scratch/
