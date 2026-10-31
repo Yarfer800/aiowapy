@@ -179,6 +179,10 @@ class ClientSession:
                 continue
             except (ConnectionError, OSError):
                 return "closed"
+            except Exception as exc:  # websockets raises its own ConnectionClosed
+                if type(exc).__name__.startswith("ConnectionClosed"):
+                    return "closed"
+                raise
 
             node = decode_node(frame)
             if self._observer is not None:
@@ -191,6 +195,10 @@ class ClientSession:
                         return "restart"
                     raise SessionError(f"session rejected: {error.code} {error.text}")
                 if error.code == STREAM_ERROR_RESTART:
+                    # 515 right after pairing means the device was accepted: persist
+                    # the account so the reconnect uses a login payload.
+                    if state.jid:
+                        await self._store_me(store, state)
                     return "restart"
                 return "close"
 
@@ -279,6 +287,8 @@ class ClientSession:
 
     async def _forget_me(self, store: SessionStore, state: SessionState) -> None:
         state.paired = False
+        state.jid = None
+        state.lid = None
         await store.save_creds(state.credentials.to_dict())
 
     async def _ack(self, transport: Transport, node: Node) -> None:

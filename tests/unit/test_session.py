@@ -245,3 +245,24 @@ async def test_prekeys_are_uploaded_after_connect(session_path: Path) -> None:
         pending = await store.pending_prekeys()
     assert available > 0
     assert pending == []
+
+
+async def test_restart_after_pairing_persists_the_account(session_path: Path) -> None:
+    credentials = generate_credentials()
+    async with SessionStore(session_path) as store:
+        await store.save_creds(credentials.to_dict())
+
+    ScriptedTransport.scripts = [
+        [pair_device_node(["2@a"]), pair_success_node(credentials), stream_error_node(515)],
+        [stream_error_node(515)],
+    ]
+    ScriptedTransport.handshakes = []
+    session = ClientSession(
+        session_path, transport_factory=ScriptedTransport, qr_callback=lambda item: None
+    )
+    await asyncio.wait_for(session.run(), timeout=20)
+
+    async with SessionStore(session_path) as store:
+        stored = await store.load_creds()
+    assert stored is not None and stored["me"]["id"].endswith("@s.whatsapp.net")
+    assert 1 in parse_fields(ScriptedTransport.handshakes[1])  # login payload
