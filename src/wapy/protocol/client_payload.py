@@ -173,8 +173,7 @@ def build_login_payload(
         varint_field_explicit(12, CONNECT_TYPE_WIFI_UNKNOWN),
         varint_field_explicit(13, CONNECT_REASON_USER_ACTIVATED),
         varint_field_explicit(18, device),
-        varint_field_explicit(24, 1),  # lc: the reference client sets this when unset
-        varint_field_explicit(41, 1),  # lidDbMigrated
+        varint_field_explicit(41, 0),  # lidDbMigrated: the reference sends false
     ]
     if push_name:
         fields.append(bytes_field(7, push_name.encode("utf-8")))

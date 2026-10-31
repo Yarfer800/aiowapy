@@ -55,6 +55,13 @@ def new_message_id() -> str:
     return secrets.token_hex(4)
 
 
+def _reason_code(node: Node) -> int:
+    try:
+        return int(node.attrs.get("reason", "500"))
+    except (TypeError, ValueError):
+        return 500
+
+
 def unified_session_id(now_seconds: float | None = None) -> str:
     """Session marker the reference client sends right after pairing."""
     now = int((now_seconds if now_seconds is not None else time.time()) * 1000)
@@ -283,6 +290,12 @@ class ClientSession:
                 await self._ensure_prekeys(transport, state, store)
                 return "connected"
             if node.tag == "failure":
+                reason = _reason_code(node)
+                # A paired session that suddenly cannot log in means the device was
+                # unlinked or never activated: drop the account and pair again.
+                if state.paired and reason in STREAM_ERROR_LOGGED_OUT | {405}:
+                    await self._forget_me(store, state)
+                    return "restart"
                 raise SessionError(f"connection refused: {node.attrs} (paired={state.paired})")
 
     async def _ensure_prekeys(
