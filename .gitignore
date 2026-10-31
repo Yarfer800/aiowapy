@@ -39,6 +39,9 @@ keys.log
 # Local-only debugging tools (kept on disk, never committed)
 /tools/capture/
 
+# Local notes and design docs (never published)
+/docs/
+
 # Local scratch
 /tmp/
 scratch/
