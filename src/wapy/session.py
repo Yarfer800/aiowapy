@@ -9,11 +9,12 @@ network.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -27,6 +28,13 @@ from wapy.protocol.pairing import (
     build_pair_device_sign_reply,
     parse_pair_success,
     verify_pair_success,
+)
+from wapy.protocol.pairing_code import (
+    CompanionFinishRequest,
+    PairingCodeError,
+    build_companion_finish,
+    build_companion_hello,
+    parse_companion_finish,
 )
 from wapy.protocol.prekeys import (
     INITIAL_PREKEY_COUNT,
@@ -53,6 +61,13 @@ KEEPALIVE_GRACE = 5.0
 
 def new_message_id() -> str:
     return secrets.token_hex(4)
+
+
+def _digits(phone: str) -> str:
+    digits = "".join(char for char in phone if char.isdigit())
+    if not digits:
+        raise SessionError(f"phone number has no digits: {phone!r}")
+    return digits
 
 
 def _reason_code(node: Node) -> int:
@@ -216,6 +231,94 @@ class ClientSession:
                 await transport.close()
                 return
             await self._send(transport, build_ping_node(new_message_id()))
+
+    async def pair_with_phone_number(self, phone: str, code: str) -> SessionState:
+        """Link this device by typing a code on the phone instead of scanning a QR.
+
+        The code itself is produced by `generate_pairing_code()`; the caller shows
+        it to the user before awaiting this method, because the phone asks for it
+        only after the companion_hello request goes out.
+        """
+        async with SessionStore(self._path) as store:
+            state = await self._load_state(store)
+            phone_jid = f"{_digits(phone)}@s.whatsapp.net"
+            transport = self._factory()
+            await transport.connect()
+            keepalive = asyncio.create_task(self._keepalive_loop(transport))
+            try:
+                await transport.handshake(
+                    client_payload=build_registration_payload(
+                        state.credentials, version=self._version
+                    )
+                )
+                self._last_recv = time.monotonic()
+                await self._send(
+                    transport,
+                    build_companion_hello(
+                        state.credentials,
+                        phone_jid,
+                        code,
+                        new_message_id(),
+                        salt=secrets.token_bytes(32),
+                        iv=secrets.token_bytes(16),
+                    ),
+                )
+                request = await self._await_companion_finish(transport)
+                finish_node, adv_secret = build_companion_finish(
+                    state.credentials,
+                    request,
+                    code,
+                    phone_jid,
+                    new_message_id(),
+                    random=secrets.token_bytes(32),
+                    link_code_salt=secrets.token_bytes(32),
+                    iv=secrets.token_bytes(12),
+                )
+                await self._send(transport, finish_node)
+                state.credentials = replace(
+                    state.credentials,
+                    adv_secret_key=base64.b64encode(adv_secret).decode("ascii"),
+                )
+                state.jid = phone_jid
+                await self._await_success(transport, state, store)
+                await self._store_me(store, state)
+                await self._ensure_prekeys(transport, state, store)
+                return state
+            finally:
+                keepalive.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await keepalive
+                await transport.close()
+
+    async def _await_companion_finish(self, transport: Transport) -> CompanionFinishRequest:
+        while True:
+            node = decode_node(await transport.recv_encrypted())
+            if self._observer is not None:
+                self._observer(node)
+            self._last_recv = time.monotonic()
+            try:
+                return parse_companion_finish(node)
+            except PairingCodeError:
+                continue
+
+    async def _await_success(
+        self, transport: Transport, state: SessionState, store: SessionStore
+    ) -> None:
+        while True:
+            node = decode_node(await transport.recv_encrypted())
+            if self._observer is not None:
+                self._observer(node)
+            self._last_recv = time.monotonic()
+            if node.tag == "success":
+                jid = node.attrs.get("jid")
+                lid = node.attrs.get("lid")
+                if jid:
+                    state.jid = jid
+                if lid:
+                    state.lid = lid
+                return
+            if node.tag == "failure":
+                raise SessionError(f"pairing rejected: {node.attrs}")
 
     async def _serve(self, transport: Transport, state: SessionState, store: SessionStore) -> str:
         source = None

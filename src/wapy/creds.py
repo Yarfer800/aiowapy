@@ -48,6 +48,7 @@ class DeviceCredentials:
     signed_pre_key: SignedPreKey
     registration_id: int
     adv_secret_key: str
+    pairing_ephemeral_key: KeyPair | None = None
 
     @property
     def noise_public(self) -> bytes:
@@ -82,6 +83,12 @@ class DeviceCredentials:
             "signed_pre_key_signature": _b64(self.signed_pre_key.signature),
             "registration_id": self.registration_id,
             "adv_secret_key": self.adv_secret_key,
+            "pairing_ephemeral_private": _b64(self.pairing_ephemeral_key.private)
+            if self.pairing_ephemeral_key
+            else None,
+            "pairing_ephemeral_public": _b64(self.pairing_ephemeral_key.public)
+            if self.pairing_ephemeral_key
+            else None,
         }
 
     @classmethod
@@ -106,6 +113,10 @@ class DeviceCredentials:
                 ),
                 registration_id=int(data["registration_id"]),
                 adv_secret_key=str(data["adv_secret_key"]),
+                pairing_ephemeral_key=_optional_key_pair(
+                    data.get("pairing_ephemeral_private"),
+                    data.get("pairing_ephemeral_public"),
+                ),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise CredentialsError(f"malformed credentials: {exc}") from exc
@@ -155,7 +166,15 @@ def generate_credentials(
         ),
         registration_id=registration_id,
         adv_secret_key=base64.b64encode(secrets.token_bytes(ADV_SECRET_LEN)).decode("ascii"),
+        pairing_ephemeral_key=generate_keypair(),
     )
+
+
+def _optional_key_pair(private: object, public: object) -> KeyPair | None:
+    """Older sessions predate the pairing key; generate one instead of failing."""
+    if private is None or public is None:
+        return generate_keypair()
+    return KeyPair(private=_unb64(private, 32), public=_unb64(public, 32))
 
 
 def _b64(value: bytes) -> str:

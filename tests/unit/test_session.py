@@ -11,6 +11,7 @@ from wapy.crypto.primitives import generate_keypair, hmac_sha256
 from wapy.crypto.xeddsa import sign
 from wapy.pb import bytes_field, first_int, parse_fields, varint_field
 from wapy.protocol.pairing import ACCOUNT_SIG_PREFIX
+from wapy.protocol.stream import child
 from wapy.protocol.wabinary import Node, decode_node, encode_node
 from wapy.session import ClientSession, SessionError, parse_stream_error
 from wapy.store import SessionStore
@@ -334,3 +335,99 @@ async def test_failure_401_on_paired_session_is_reported(session_path: Path) -> 
     async with SessionStore(session_path) as store:
         stored = await store.load_creds()
     assert stored is not None and "me" not in stored
+
+
+def _companion_finish_node(
+    server_ephemeral_public: bytes, primary_identity_public: bytes, code: str
+) -> Node:
+    from wapy.protocol.pairing_code import wrap_ephemeral_public
+
+    wrapped = wrap_ephemeral_public(code, server_ephemeral_public, salt=bytes(32), iv=bytes(16))
+    return Node(
+        tag="iq",
+        attrs={"type": "set", "xmlns": "md"},
+        content=[
+            Node(
+                tag="link_code_companion_reg",
+                attrs={"stage": "companion_finish"},
+                content=[
+                    Node(tag="link_code_pairing_ref", attrs={}, content=b"ref"),
+                    Node(tag="primary_identity_pub", attrs={}, content=primary_identity_public),
+                    Node(
+                        tag="link_code_pairing_wrapped_primary_ephemeral_pub",
+                        attrs={},
+                        content=wrapped,
+                    ),
+                ],
+            )
+        ],
+    )
+
+
+async def test_pairing_by_phone_number_completes(
+    session_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wapy.crypto.primitives import generate_keypair
+
+    monkeypatch.setattr(ScriptedTransport, "gap", 0.0)
+    credentials = generate_credentials()
+    async with SessionStore(session_path) as store:
+        await store.save_creds(credentials.to_dict())
+
+    code = "ABCD1234"
+    server_ephemeral = generate_keypair()
+    primary_identity = generate_keypair()
+    ScriptedTransport.scripts = [
+        [
+            _companion_finish_node(server_ephemeral.public, primary_identity.public, code),
+            Node(tag="success", attrs={}),
+        ]
+    ]
+    ScriptedTransport.handshakes = []
+    ScriptedTransport.instances = []
+
+    session = ClientSession(session_path, transport_factory=ScriptedTransport)
+    state = await asyncio.wait_for(
+        session.pair_with_phone_number("+79 646 669 102", code), timeout=20
+    )
+
+    assert state.jid == "79646669102@s.whatsapp.net"
+    transport = ScriptedTransport.instances[0]
+    stages = [
+        child(node, "link_code_companion_reg").attrs["stage"]
+        for node in transport.sent
+        if child(node, "link_code_companion_reg") is not None
+    ]
+    assert stages == ["companion_hello", "companion_finish"]
+
+    async with SessionStore(session_path) as store:
+        stored = await store.load_creds()
+        available = await store.count_available_prekeys()
+    assert stored is not None
+    assert stored["me"]["id"] == "79646669102@s.whatsapp.net"
+    assert stored["adv_secret_key"] != credentials.adv_secret_key
+    assert available > 0
+
+
+async def test_phone_pairing_rejects_a_failure(session_path: Path) -> None:
+    from wapy.crypto.primitives import generate_keypair
+
+    credentials = generate_credentials()
+    async with SessionStore(session_path) as store:
+        await store.save_creds(credentials.to_dict())
+
+    ScriptedTransport.scripts = [
+        [
+            _companion_finish_node(
+                generate_keypair().public, generate_keypair().public, "ABCD1234"
+            ),
+            Node(tag="failure", attrs={"reason": "401"}),
+        ]
+    ]
+    ScriptedTransport.handshakes = []
+    ScriptedTransport.instances = []
+    session = ClientSession(session_path, transport_factory=ScriptedTransport)
+    with pytest.raises(SessionError):
+        await asyncio.wait_for(
+            session.pair_with_phone_number("79646669102", "ABCD1234"), timeout=20
+        )

@@ -6,6 +6,7 @@ Everything the protocol needs lives in one place, so callers never import
 
 from __future__ import annotations
 
+import hashlib
 import hmac as stdlib_hmac
 from dataclasses import dataclass
 
@@ -113,6 +114,23 @@ def aes_gcm_decrypt(key: bytes, iv: bytes, data: bytes, aad: bytes = b"") -> byt
         return AESGCM(key).decrypt(iv, data, aad)
     except (ValueError, InvalidTag) as exc:
         raise CryptoError("data is corrupted or the key is wrong") from exc
+
+
+def aes_ctr(key: bytes, iv: bytes, data: bytes) -> bytes:
+    """AES-256-CTR is symmetric: the same call encrypts and decrypts."""
+    _require_length(key, KEY_LEN, "key")
+    if len(iv) != IV_LEN:
+        raise CryptoError(f"IV: expected {IV_LEN} bytes, got {len(iv)}")
+    transformer = Cipher(algorithms.AES(key), modes.CTR(iv)).encryptor()
+    return transformer.update(data) + transformer.finalize()
+
+
+def pbkdf2_sha256(password: bytes, salt: bytes, iterations: int, length: int = 32) -> bytes:
+    if iterations < 1:
+        raise CryptoError("PBKDF2 iterations must be positive")
+    if length < 1:
+        raise CryptoError("PBKDF2 output length must be positive")
+    return hashlib.pbkdf2_hmac("sha256", password, salt, iterations, length)
 
 
 def generate_keypair() -> KeyPair:

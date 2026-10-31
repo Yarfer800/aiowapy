@@ -1,0 +1,48 @@
+"""Link a device by typing a code on the phone instead of scanning a QR.
+
+    WAPY_PROXY=http://127.0.0.1:10809 uv run python examples/pair_code.py +79646669102 bot.session
+
+The phone needs the code from the moment it is printed: open WhatsApp, choose
+Linked devices, "Link with phone number", and type it in.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+from wapy.protocol.pairing_code import generate_pairing_code
+from wapy.protocol.transport import WhatsAppTransport
+from wapy.session import ClientSession
+
+
+async def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: pair_code.py <phone_number> [session_path]")
+        return 2
+    phone = sys.argv[1]
+    session_path = Path(sys.argv[2] if len(sys.argv) > 2 else "wapy.session")
+    proxy = os.environ.get("WAPY_PROXY") or None
+
+    code = generate_pairing_code()
+    print(f"code: {code}")
+    print("WhatsApp -> Linked devices -> Link with phone number -> type the code\n")
+
+    session = ClientSession(
+        session_path,
+        transport_factory=lambda: WhatsAppTransport(proxy=proxy, timeout=25),
+        node_observer=lambda node: print(f"  <- {node.tag} {node.attrs}", flush=True),
+    )
+    state = await session.pair_with_phone_number(phone, code)
+    if state.jid:
+        print(f"paired as {state.jid} (lid {state.lid})")
+        print(f"session: {session_path}")
+        return 0
+    print("pairing did not complete")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))
