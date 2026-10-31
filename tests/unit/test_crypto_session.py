@@ -143,3 +143,13 @@ def test_signal_key_normalises_prefix() -> None:
     assert signal_key(b"\x05" + key) == b"\x05" + key
     with pytest.raises(SessionError):
         signal_key(b"\x01" * 31)
+
+
+def test_serialization_handles_established_chains() -> None:
+    """Regression: chains are keyed by raw bytes, which JSON cannot use as keys."""
+    p = Pair()
+    assert decrypt(p.bob, encrypt(p.alice, b"one")) == b"one"
+    assert decrypt(p.alice, encrypt(p.bob, b"two")) == b"two"
+
+    restored = deserialize(serialize(p.bob))
+    assert decrypt(restored, encrypt(p.alice, b"three")) == b"three"

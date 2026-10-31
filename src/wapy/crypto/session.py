@@ -125,7 +125,7 @@ class SessionState:
             else None,
             "previous_counter": self.previous_counter,
             "chains": {
-                base64.b64encode(base): {
+                base64.b64encode(base).decode("ascii"): {
                     "key": base64.b64encode(chain.key).decode() if chain.key else None,
                     "counter": chain.counter,
                     "sending": chain.sending,
@@ -373,13 +373,13 @@ def deserialize(blob: bytes) -> SessionState:
     return SessionState.from_dict(json.loads(blob.decode("utf-8")))
 
 
-def prekey_message(state: SessionState, message: bytes) -> bytes:
+def prekey_message(state: SessionState, message: bytes, *, registration_id: int = 0) -> bytes:
     """Wrap a first message in a PreKeyWhisperMessage for the recipient."""
     if state.pending_pre_key is None:
         raise SessionError("session has no pending prekey data")
     return MESSAGE_VERSION + encode_prekey(
         PreKeyWhisperMessage(
-            registration_id=0,
+            registration_id=registration_id,
             pre_key_id=state.pending_pre_key.pre_key_id,
             signed_pre_key_id=state.pending_pre_key.signed_pre_key_id,
             base_key=signal_key(state.pending_pre_key.base_key),

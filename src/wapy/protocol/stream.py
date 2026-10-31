@@ -42,6 +42,7 @@ class NodeStream:
     def __init__(self, transport: WhatsAppTransport) -> None:
         self._transport = transport
         self._pending: dict[str, asyncio.Future[Node]] = {}
+        self._ack_waiters: dict[str, asyncio.Future[bool]] = {}
         self._listeners: list[Callable[[Node], Awaitable[None] | None]] = []
         self._reader: asyncio.Task[None] | None = None
         self._closed = False
@@ -82,6 +83,18 @@ class NodeStream:
         finally:
             self._pending.pop(node_id, None)
 
+    async def wait_for_ack(self, message_id: str, *, timeout: float) -> bool:
+        """Wait for `<ack id=...>`; a timeout returns False, not an exception."""
+        loop = asyncio.get_running_loop()
+        waiter: asyncio.Future[bool] = loop.create_future()
+        self._ack_waiters[message_id] = waiter
+        try:
+            return await asyncio.wait_for(waiter, timeout=timeout)
+        except TimeoutError:
+            return False
+        finally:
+            self._ack_waiters.pop(message_id, None)
+
     async def _read_loop(self) -> None:
         while not self._closed:
             try:
@@ -95,6 +108,11 @@ class NodeStream:
 
     async def _dispatch(self, node: Node) -> None:
         node_id = node.attrs.get("id")
+        if node.tag == "ack" and node_id and node_id in self._ack_waiters:
+            waiter = self._ack_waiters[node_id]
+            if not waiter.done():
+                waiter.set_result(True)
+            return
         if node.tag == "iq" and node_id and node_id in self._pending:
             future = self._pending[node_id]
             if not future.done():
