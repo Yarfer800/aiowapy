@@ -62,11 +62,6 @@ local function open_notes_buffer(path)
 end
 
 local function open_code(index)
-    local dbf = io.open("/tmp/opencode/review/open_code.log", "a")
-    if dbf then
-        dbf:write(tostring(index), " ", debug.traceback(), "\n")
-        dbf:close()
-    end
     local file = state.files[index]
     if not file then
         return
@@ -80,6 +75,8 @@ local function open_code(index)
     vim.api.nvim_set_current_win(state.new_win)
     pcall(vim.cmd, "silent edit! " .. vim.fn.fnameescape(file.path))
     vim.cmd("diffthis")
+    vim.wo[state.new_win].number = true
+    vim.wo[state.new_win].relativenumber = true
     vim.cmd("silent diffupdate")
 
     local hunk = file.hunks[1]
@@ -211,6 +208,9 @@ local function write_comments()
     end
     local lines = vim.api.nvim_buf_get_lines(state.review_buf, 0, -1, false)
     local notes = collect_notes(lines)
+    while #notes > 0 and trim(notes[#notes]) == "" do
+        notes[#notes] = nil
+    end
     local path = state.ws .. "/comments.md"
     local fd = io.open(path, "w")
     if not fd then
@@ -223,11 +223,14 @@ local function write_comments()
 end
 
 local function save_review()
-    if state.review_buf and vim.api.nvim_buf_is_valid(state.review_buf) then
-        vim.api.nvim_buf_call(state.review_buf, function()
-            vim.cmd("silent! write")
-        end)
+    local buf = state.review_buf
+    if not buf or not vim.api.nvim_buf_is_valid(buf) then
+        return
     end
+    -- Write the lines directly: `:write` from an autocmd context is not
+    -- reliable, and the notes buffer is plain markdown on disk.
+    vim.fn.writefile(vim.api.nvim_buf_get_lines(buf, 0, -1, false), review_path())
+    vim.bo[buf].modified = false
 end
 
 local function step(delta)
@@ -261,16 +264,7 @@ end
 
 local M = {}
 
-local function dbg(msg)
-    local fd = io.open("/tmp/opencode/review/dbg.log", "a")
-    if fd then
-        fd:write(msg, "\n")
-        fd:close()
-    end
-end
-
 function M.setup(manifest_path)
-    dbg("setup start")
     -- A restored session or a plugin's VimEnter hook may have left windows
     -- behind; the review layout starts from an empty tab.
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -290,10 +284,10 @@ function M.setup(manifest_path)
     pcall(vim.cmd, "silent edit! " .. vim.fn.fnameescape(state.files[1].old))
     state.old_win = vim.api.nvim_get_current_win()
 
-    vim.cmd("silent vsplit")
+    vim.cmd("botright vsplit")
     state.new_win = vim.api.nvim_get_current_win()
 
-    vim.cmd("silent vsplit")
+    vim.cmd("botright vsplit")
     state.review_win = vim.api.nvim_get_current_win()
     state.review_buf = open_notes_buffer(review_path())
     vim.api.nvim_win_set_buf(state.review_win, state.review_buf)
@@ -306,7 +300,6 @@ function M.setup(manifest_path)
     local width = math.max(40, math.floor(vim.o.columns * 0.35))
     vim.api.nvim_win_set_width(state.review_win, width)
 
-    dbg("layout ready")
     open_code(1)
     vim.api.nvim_set_current_win(state.review_win)
 
@@ -325,6 +318,15 @@ function M.setup(manifest_path)
     vim.api.nvim_create_autocmd("VimLeavePre", {
         group = group,
         callback = write_comments,
+    })
+    -- Plain `:qa` should work even when the user edited a code buffer: save the
+    -- notes and the edits before nvim checks for unsaved changes.
+    vim.api.nvim_create_autocmd("QuitPre", {
+        group = group,
+        callback = function()
+            save_review()
+            vim.cmd("silent! wall")
+        end,
     })
     vim.api.nvim_create_autocmd("TextChanged", {
         group = group,
@@ -364,9 +366,6 @@ function _G.ReviewJump()
 end
 
 function _G.ReviewSetup(manifest_path)
-    -- Session managers would restore an unrelated layout on top of the review.
-    vim.g.auto_session_enabled = false
-
     if vim.v.vim_did_enter == 1 then
         M.setup(manifest_path)
         return
@@ -374,11 +373,8 @@ function _G.ReviewSetup(manifest_path)
     vim.api.nvim_create_autocmd("VimEnter", {
         once = true,
         callback = function()
-            dbg("vimenter")
             vim.schedule(function()
-                dbg("scheduled")
-                local ok, err = pcall(M.setup, manifest_path)
-                dbg("setup done ok=" .. tostring(ok) .. " err=" .. tostring(err))
+                M.setup(manifest_path)
             end)
         end,
     })

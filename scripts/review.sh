@@ -16,6 +16,10 @@ die() {
     exit "$code"
 }
 
+script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+lua=$script_dir/review.lua
+[ -f "$lua" ] || die "missing $lua" 3
+
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not a git repository"
 base=${1:-HEAD}
 git rev-parse --verify --quiet "$base^{commit}" >/dev/null || die "cannot resolve '$base'"
@@ -98,18 +102,20 @@ if [ -n "${REVIEW_DRY_RUN:-}" ]; then
     exit 0
 fi
 
-export REVIEW_LUA="$root/scripts/review.lua"
+export REVIEW_LUA="$lua"
 export REVIEW_MANIFEST="$manifest"
 
-if command -v kitty >/dev/null 2>&1; then
-    kitty --class review --title "review: $name ($base)" \
-        nvim -c 'lua dofile(vim.env.REVIEW_LUA)' \
-        -c 'lua ReviewSetup(vim.env.REVIEW_MANIFEST)'
+review_cmd=(nvim --clean --cmd 'syntax enable' --cmd 'filetype plugin indent on'
+    -c 'lua dofile(vim.env.REVIEW_LUA)'
+    -c 'lua ReviewSetup(vim.env.REVIEW_MANIFEST)')
+
+if command -v kitty >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+    kitty --class review --title "review: $name ($base)" "${review_cmd[@]}"
 elif [ -n "${TMUX:-}" ]; then
-    tmux new-window -n review \
-        "nvim -c 'lua dofile(vim.env.REVIEW_LUA)' -c 'lua ReviewSetup(vim.env.REVIEW_MANIFEST)'"
+    # A new tmux window does not inherit the client environment, pass it along.
+    tmux new-window -n review "$(printf '%q ' env REVIEW_LUA="$REVIEW_LUA" REVIEW_MANIFEST="$REVIEW_MANIFEST" "${review_cmd[@]}")"
 else
-    die "need kitty or a tmux session to open the review window" 3
+    die "need kitty (or a tmux session) to open the review window" 3
 fi
 
 if [ -s "$ws/comments.md" ]; then
