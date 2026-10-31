@@ -447,3 +447,35 @@ async def test_phone_pairing_rejects_a_failure(session_path: Path) -> None:
         await asyncio.wait_for(
             session.pair_with_phone_number("79646669102", "ABCD1234"), timeout=20
         )
+
+
+async def test_phone_pairing_acknowledges_server_requests(session_path: Path) -> None:
+    from wapy.crypto.primitives import generate_keypair
+
+    credentials = generate_credentials()
+    async with SessionStore(session_path) as store:
+        await store.save_creds(credentials.to_dict())
+
+    server_request = Node(tag="iq", attrs={"type": "set", "id": "srv-1", "xmlns": "md"})
+    ScriptedTransport.scripts = [
+        [
+            _pairing_ref_node(),
+            server_request,
+            _companion_finish_node(
+                generate_keypair().public, generate_keypair().public, "ABCD1234"
+            ),
+            Node(tag="success", attrs={}),
+        ]
+    ]
+    ScriptedTransport.handshakes = []
+    ScriptedTransport.instances = []
+    session = ClientSession(session_path, transport_factory=ScriptedTransport)
+    await asyncio.wait_for(session.pair_with_phone_number("79646669102", "ABCD1234"), timeout=20)
+
+    sent = ScriptedTransport.instances[0].sent
+    acks = [
+        n
+        for n in sent
+        if n.tag == "iq" and n.attrs.get("type") == "result" and n.attrs.get("id") == "srv-1"
+    ]
+    assert acks and acks[0].attrs["to"] == "@s.whatsapp.net"

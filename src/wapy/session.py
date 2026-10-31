@@ -315,7 +315,24 @@ class ClientSession:
         node = decode_node(frame)
         if self._observer is not None:
             self._observer(node)
+        await self._ack_server_request(transport, node)
         return node
+
+    async def _ack_server_request(self, transport: Transport, node: Node) -> None:
+        """The server sends `iq type=set` requests and expects a result for each."""
+        if node.tag != "iq" or node.attrs.get("type") != "set":
+            return
+        await self._send(
+            transport,
+            Node(
+                tag="iq",
+                attrs={
+                    "to": S_WHATSAPP_NET,
+                    "type": "result",
+                    "id": node.attrs.get("id", ""),
+                },
+            ),
+        )
 
     async def _await_companion_finish(
         self, transport: Transport, pairing_ref: bytes | None = None
