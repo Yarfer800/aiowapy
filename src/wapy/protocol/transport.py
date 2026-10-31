@@ -113,6 +113,10 @@ class WhatsAppTransport:
                     max_size=None,
                     open_timeout=self._timeout,
                     close_timeout=2,
+                    # WhatsApp does not answer WebSocket-level pings promptly, and a
+                    # proxy adds latency; the reference client disables them entirely.
+                    # Keepalive is done at the node level instead.
+                    ping_interval=None,
                 ),
                 timeout=self._timeout,
             )
