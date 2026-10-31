@@ -94,7 +94,11 @@ class ScriptedTransport:
         return object()
 
     async def send_encrypted(self, payload: bytes) -> None:
-        self.sent.append(decode_node(payload))
+        node = decode_node(payload)
+        self.sent.append(node)
+        # Answer prekey uploads automatically so queries do not hang.
+        if node.attrs.get("xmlns") == "encrypt" and node.attrs.get("type") == "set":
+            self._frames.append(Node(tag="iq", attrs={"id": node.attrs["id"], "type": "result"}))
 
     async def recv_encrypted(self) -> bytes:
         if not self._frames:
@@ -202,3 +206,20 @@ async def test_qr_rotation_uses_next_ref(
     await asyncio.wait_for(session.run(), timeout=10)
     assert "2@first" in shown[0].payload
     assert any("2@second" in item.payload for item in shown)
+
+
+async def test_prekeys_are_uploaded_after_connect(session_path: Path) -> None:
+    credentials = generate_credentials()
+    async with SessionStore(session_path) as store:
+        await store.save_creds({**credentials.to_dict(), "me": {"id": "1:2@s.whatsapp.net"}})
+
+    ScriptedTransport.scripts = [[Node(tag="success", attrs={})]]
+    ScriptedTransport.handshakes = []
+    session = ClientSession(session_path, transport_factory=ScriptedTransport)
+    await asyncio.wait_for(session.run(), timeout=20)
+
+    async with SessionStore(session_path) as store:
+        available = await store.count_available_prekeys()
+        pending = await store.pending_prekeys()
+    assert available > 0
+    assert pending == []

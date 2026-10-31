@@ -9,6 +9,7 @@ network.
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Protocol
 
 from wapy.creds import DeviceCredentials, generate_credentials
+from wapy.crypto.primitives import generate_keypair
 from wapy.errors import WapyError
 from wapy.pairing import PairingQr, PairingQrSource
 from wapy.protocol.client_payload import build_login_payload, build_registration_payload
@@ -24,6 +26,14 @@ from wapy.protocol.pairing import (
     build_pair_device_sign_reply,
     parse_pair_success,
     verify_pair_success,
+)
+from wapy.protocol.prekeys import (
+    INITIAL_PREKEY_COUNT,
+    MIN_PREKEY_COUNT,
+    build_upload_node,
+    pack_key_pair,
+    prekeys_to_upload,
+    unpack_public,
 )
 from wapy.protocol.stream import child, children
 from wapy.protocol.wabinary import Node, decode_node, encode_node
@@ -36,6 +46,10 @@ STREAM_ERROR_LOGGED_OUT = {401, 403, 409}
 
 QR_FIRST_TTL = 60
 QR_NEXT_TTL = 20
+
+
+def new_message_id() -> str:
+    return secrets.token_hex(4)
 
 
 class SessionError(WapyError):
@@ -196,9 +210,54 @@ class ClientSession:
                 return "paired"
 
             if node.tag == "success":
+                await self._ensure_prekeys(transport, state, store)
                 return "connected"
             if node.tag == "failure":
                 raise SessionError(f"connection refused: {node.attrs}")
+
+    async def _ensure_prekeys(
+        self, transport: Transport, state: SessionState, store: SessionStore
+    ) -> None:
+        """Publish one-time prekeys so other devices can start a session with us."""
+        available = await store.count_available_prekeys()
+        if available > MIN_PREKEY_COUNT:
+            return
+        pending = await store.pending_prekeys()
+        missing = INITIAL_PREKEY_COUNT - available - len(pending)
+        if missing > 0:
+            start = (await store.max_prekey_id() or 0) + 1
+            batch = [
+                (start + offset, pack_key_pair(kp.private, kp.public))
+                for offset, kp in enumerate(generate_keypair() for _ in range(missing))
+            ]
+            await store.add_prekeys(batch)
+            pending = await store.pending_prekeys()
+        if not pending:
+            return
+        node = build_upload_node(
+            state.credentials,
+            [(key_id, unpack_public(blob)) for key_id, blob in prekeys_to_upload(pending)],
+            new_message_id(),
+        )
+        response = await self._query(transport, node)
+        if response.attrs.get("type") == "error":
+            raise SessionError(f"prekey upload rejected: {response.attrs}")
+        await store.mark_prekeys_uploaded([key_id for key_id, _blob in pending])
+
+    async def _query(self, transport: Transport, node: Node, *, timeout: float = 30.0) -> Node:
+        message_id = node.attrs.get("id")
+        if not message_id:
+            raise SessionError("query node has no id")
+        await transport.send_encrypted(encode_node(node))
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SessionError(f"no response to {node.attrs.get('xmlns')} query")
+            frame = await asyncio.wait_for(transport.recv_encrypted(), timeout=remaining)
+            response = decode_node(frame)
+            if response.tag == "iq" and response.attrs.get("id") == message_id:
+                return response
 
     async def _ack(self, transport: Transport, node: Node) -> None:
         await transport.send_encrypted(
