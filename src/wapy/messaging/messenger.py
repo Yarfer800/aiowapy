@@ -76,7 +76,12 @@ class Messenger:
         return await self.send_payload(jid, encode_text(text), wait_for_message=wait_for_message)
 
     async def send_payload(
-        self, jid: str, payload: bytes, *, wait_for_message: bool = True
+        self,
+        jid: str,
+        payload: bytes,
+        *,
+        message_type: str = "text",
+        wait_for_message: bool = True,
     ) -> SendResult:
         devices = await self._devices.devices(jid)
         if not devices:
@@ -87,7 +92,7 @@ class Messenger:
             raise MessagingError(f"could not encrypt for any device of {jid}: {failed}")
 
         message_id = self._new_id()
-        node = build_message_node(jid, message_id, encrypted)
+        node = build_message_node(jid, message_id, encrypted, message_type=message_type)
         await self._sender.send(node)
 
         acked: bool | None = None

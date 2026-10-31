@@ -29,6 +29,7 @@ MMS_TYPES: dict[str, str] = {
 # Message protobuf field that carries each attachment type.
 MESSAGE_FIELDS: dict[str, int] = {
     MEDIA_IMAGE: 3,
+    MEDIA_PTT: 8,
     MEDIA_DOCUMENT: 7,
     MEDIA_AUDIO: 8,
     MEDIA_VIDEO: 9,

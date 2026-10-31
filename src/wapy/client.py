@@ -24,6 +24,7 @@ from wapy.events import (
 )
 from wapy.messaging.devices import CachedDeviceResolver
 from wapy.messaging.groups import GroupSender, GroupService, StoreSenderKeys
+from wapy.messaging.media import MediaStorage, MediaTransport, UrllibMediaTransport
 from wapy.messaging.messenger import Messenger, SendResult
 from wapy.messaging.real import (
     StoreSignalSessionsWithDecrypt,
@@ -32,6 +33,15 @@ from wapy.messaging.real import (
 )
 from wapy.messaging.receiving import DecryptError, MessageReceiver, ReceiveError
 from wapy.protocol.groups import GroupInfo, GroupParticipant
+from wapy.protocol.media import (
+    MEDIA_AUDIO,
+    MEDIA_DOCUMENT,
+    MEDIA_IMAGE,
+    MEDIA_PTT,
+    MEDIA_VIDEO,
+    MediaInfo,
+)
+from wapy.protocol.messages import encode_media
 from wapy.protocol.prekeys import pack_key_pair
 from wapy.protocol.presence import (
     PRESENCE_AVAILABLE,
@@ -118,6 +128,7 @@ class WhatsAppClient:
         version: tuple[int, int, int] = DEFAULT_VERSION,
         ack_timeout: float = DEFAULT_ACK_TIMEOUT,
         auto_receipts: bool = True,
+        media_transport: MediaTransport | None = None,
         node_observer: Callable[[Node], None] | None = None,
         sent_observer: Callable[[Node], None] | None = None,
         reconnect: bool = True,
@@ -143,6 +154,8 @@ class WhatsAppClient:
         self._groups: GroupService | None = None
         self._group_sender: GroupSender | None = None
         self._sender_keys: StoreSenderKeys | None = None
+        self._media: MediaStorage | None = None
+        self._media_transport: MediaTransport = media_transport or UrllibMediaTransport()
         self._session: ClientSession | None = None
 
         self._ready = asyncio.Event()
@@ -286,6 +299,7 @@ class WhatsAppClient:
             raise ClientError("the session file is not open")
         self._sender_keys = StoreSenderKeys(self._store, state.jid or "")
         self._groups = GroupService(stream, self._store)
+        self._media = MediaStorage(stream, self._media_transport)
         self._group_sender = GroupSender(
             StreamNodeSender(stream),
             self._build_resolver(stream, state),
@@ -360,11 +374,11 @@ class WhatsAppClient:
     async def send_text(self, jid: str, text: str, *, wait_for_message: bool = True) -> SendResult:
         if not text:
             raise ClientError("text must not be empty")
-        if jid.endswith("@g.us"):
-            return await self.send_group_text(jid, text, wait_for_message=wait_for_message)
-        messenger = self._require_messenger()
-        return await self._send_with_outbox(
-            messenger, jid, _encode_text_payload(text), wait_for_message=wait_for_message
+        return await self._deliver(
+            jid,
+            _encode_text_payload(text),
+            message_type="text",
+            wait_for_message=wait_for_message,
         )
 
     async def send_group_text(
@@ -372,13 +386,126 @@ class WhatsAppClient:
     ) -> SendResult:
         if not text:
             raise ClientError("text must not be empty")
-        sender = self._group_sender
-        if sender is None:
-            raise ClientError("the client is not connected")
-        payload = _encode_text_payload(text)
-        result = await sender.send_payload(group_jid, payload, wait_for_message=wait_for_message)
-        self._remember(result.message_id, group_jid, payload)
-        return result
+        return await self._deliver(
+            group_jid,
+            _encode_text_payload(text),
+            message_type="text",
+            wait_for_message=wait_for_message,
+        )
+
+    async def send_media(
+        self,
+        jid: str,
+        data: bytes,
+        media_type: str,
+        *,
+        caption: str | None = None,
+        file_name: str | None = None,
+        mime_type: str | None = None,
+        seconds: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        wait_for_message: bool = True,
+    ) -> SendResult:
+        """Encrypt, upload and send an attachment (image, video, audio or document)."""
+        info = await self._require_media().upload(
+            data,
+            media_type,
+            caption=caption,
+            file_name=file_name,
+            mime_type=mime_type or default_mime_type(media_type),
+            seconds=seconds,
+            width=width,
+            height=height,
+        )
+        return await self._deliver(
+            jid,
+            encode_media(info),
+            message_type=media_type,
+            wait_for_message=wait_for_message,
+        )
+
+    async def send_image(
+        self,
+        jid: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        mime_type: str | None = None,
+        wait_for_message: bool = True,
+    ) -> SendResult:
+        return await self.send_media(
+            jid,
+            data,
+            MEDIA_IMAGE,
+            caption=caption,
+            mime_type=mime_type,
+            wait_for_message=wait_for_message,
+        )
+
+    async def send_video(
+        self,
+        jid: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        seconds: int | None = None,
+        mime_type: str | None = None,
+        wait_for_message: bool = True,
+    ) -> SendResult:
+        return await self.send_media(
+            jid,
+            data,
+            MEDIA_VIDEO,
+            caption=caption,
+            seconds=seconds,
+            mime_type=mime_type,
+            wait_for_message=wait_for_message,
+        )
+
+    async def send_audio(
+        self,
+        jid: str,
+        data: bytes,
+        *,
+        voice_note: bool = False,
+        seconds: int | None = None,
+        mime_type: str | None = None,
+        wait_for_message: bool = True,
+    ) -> SendResult:
+        media_type = MEDIA_PTT if voice_note else MEDIA_AUDIO
+        return await self.send_media(
+            jid,
+            data,
+            media_type,
+            seconds=seconds,
+            mime_type=mime_type,
+            wait_for_message=wait_for_message,
+        )
+
+    async def send_document(
+        self,
+        jid: str,
+        data: bytes,
+        *,
+        file_name: str,
+        mime_type: str = "application/octet-stream",
+        caption: str | None = None,
+        wait_for_message: bool = True,
+    ) -> SendResult:
+        return await self.send_media(
+            jid,
+            data,
+            MEDIA_DOCUMENT,
+            file_name=file_name,
+            mime_type=mime_type,
+            caption=caption,
+            wait_for_message=wait_for_message,
+        )
+
+    async def download_media(self, media: MediaInfo) -> bytes:
+        """Fetch and decrypt an attachment announced by a `MessageEvent`."""
+        return await self._require_media().download(media)
 
     # ---------------------------------------------------------------------- groups
 
@@ -408,6 +535,29 @@ class WhatsAppClient:
         if self._groups is None:
             raise ClientError("the client is not connected")
         await self._groups.leave(group_jid)
+
+    async def _deliver(
+        self,
+        jid: str,
+        payload: bytes,
+        *,
+        message_type: str,
+        wait_for_message: bool,
+    ) -> SendResult:
+        if jid.endswith("@g.us"):
+            sender = self._group_sender
+            if sender is None:
+                raise ClientError("the client is not connected")
+            result = await sender.send_payload(
+                jid, payload, message_type=message_type, wait_for_message=wait_for_message
+            )
+        else:
+            messenger = self._require_messenger()
+            result = await messenger.send_payload(
+                jid, payload, message_type=message_type, wait_for_message=wait_for_message
+            )
+        self._remember(result.message_id, jid, payload)
+        return result
 
     async def _send_with_outbox(
         self, messenger: Messenger, jid: str, payload: bytes, *, wait_for_message: bool
@@ -668,10 +818,29 @@ class WhatsAppClient:
             raise ClientError("the client is not connected")
         return self._credentials
 
+    def _require_media(self) -> MediaStorage:
+        if self._media is None:
+            raise ClientError("the client is not connected")
+        return self._media
+
     def _require_store(self) -> SessionStore:
         if self._store is None:
             raise ClientError("the client is not connected")
         return self._store
+
+
+_DEFAULT_MIME = {
+    MEDIA_IMAGE: "image/jpeg",
+    MEDIA_VIDEO: "video/mp4",
+    MEDIA_AUDIO: "audio/ogg",
+    MEDIA_PTT: "audio/ogg; codecs=opus",
+    MEDIA_DOCUMENT: "application/octet-stream",
+    "sticker": "image/webp",
+}
+
+
+def default_mime_type(media_type: str) -> str:
+    return _DEFAULT_MIME.get(media_type, "application/octet-stream")
 
 
 def _encode_text_payload(text: str) -> bytes:

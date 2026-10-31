@@ -258,7 +258,12 @@ class GroupSender:
         )
 
     async def send_payload(
-        self, group_jid: str, payload: bytes, *, wait_for_message: bool = True
+        self,
+        group_jid: str,
+        payload: bytes,
+        *,
+        message_type: str = "text",
+        wait_for_message: bool = True,
     ) -> SendResult:
         participants = await self._directory.participants(group_jid)
         if not participants:
@@ -279,7 +284,12 @@ class GroupSender:
             group_jid,
             message_id,
             encrypted,
-            extra=[group_enc_node(ciphertext)],
+            message_type=message_type,
+            extra=[
+                group_enc_node(
+                    ciphertext, media_type=None if message_type == "text" else message_type
+                )
+            ],
         )
         node.attrs["phash"] = participant_hash(sent)
         await self._sender.send(node)

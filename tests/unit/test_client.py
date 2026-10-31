@@ -75,7 +75,21 @@ class FakeServer:
     # -- server behaviour ---------------------------------------------------
 
     def _auto_respond(self, node: Node) -> None:
-        if node.tag == "iq" and node.attrs.get("xmlns") == "w:g2":
+        if node.tag == "iq" and node.attrs.get("xmlns") == "w:m":
+            self.push(
+                Node(
+                    tag="iq",
+                    attrs={"type": "result", "id": node.attrs.get("id", "")},
+                    content=[
+                        Node(
+                            tag="media_conn",
+                            attrs={"auth": "auth", "ttl": "600"},
+                            content=[Node(tag="host", attrs={"hostname": "media.example"})],
+                        )
+                    ],
+                )
+            )
+        elif node.tag == "iq" and node.attrs.get("xmlns") == "w:g2":
             if node.attrs.get("type") == "get":
                 self.push(self._group_info(node))
             else:
@@ -537,6 +551,75 @@ async def test_incoming_group_message_is_decrypted(tmp_path: Path) -> None:
         assert event.text == "group hello"
         assert event.chat_jid == GROUP
         assert event.sender_jid == PEER
+    finally:
+        await client.close()
+
+
+class FakeMediaTransport:
+    def __init__(self) -> None:
+        self.posts: list[tuple[str, bytes, dict[str, str]]] = []
+        self.download_payload = b""
+
+    async def post(self, url: str, data: bytes, headers: dict[str, str]) -> bytes:
+        self.posts.append((url, data, headers))
+        return b'{"url": "https://mmg.example/blob", "direct_path": "/v/t62/blob"}'
+
+    async def get(self, url: str) -> bytes:
+        return self.download_payload
+
+
+async def test_send_image_uploads_and_sends(tmp_path: Path) -> None:
+    credentials = generate_credentials()
+    server = FakeServer()
+    media = FakeMediaTransport()
+    path = tmp_path / "bot.session"
+    await seeded_store(path, credentials)
+    client = WhatsAppClient(path, transport_factory=lambda: server, media_transport=media)
+    server.push(Node(tag="success", attrs={"jid": ME}))
+    await asyncio.wait_for(client.connect(), timeout=5)
+    try:
+        picture = b"\x89PNG" + b"x" * 64
+        result = await client.send_image(PEER, picture, caption="look")
+        assert result.acked is True
+        node = server.nodes("message")[-1]
+        assert node.attrs["type"] == "image"
+        url, payload, _headers = media.posts[0]
+        assert "mms/image/" in url
+        assert len(payload) > len(picture)
+    finally:
+        await client.close()
+
+
+async def test_download_media_decrypts(tmp_path: Path) -> None:
+    import hashlib
+
+    from wapy.crypto.media import encrypt_media
+    from wapy.protocol.media import MEDIA_IMAGE, MediaInfo
+
+    credentials = generate_credentials()
+    server = FakeServer()
+    media = FakeMediaTransport()
+    path = tmp_path / "bot.session"
+    await seeded_store(path, credentials)
+    client = WhatsAppClient(path, transport_factory=lambda: server, media_transport=media)
+    server.push(Node(tag="success", attrs={"jid": ME}))
+    await asyncio.wait_for(client.connect(), timeout=5)
+    try:
+        plaintext = b"attachment bytes"
+        media_key = b"\x07" * 32
+        encrypted = encrypt_media(media_key, MEDIA_IMAGE, plaintext)
+        media.download_payload = encrypted.payload
+        info = MediaInfo(
+            media_type=MEDIA_IMAGE,
+            mime_type="image/png",
+            url="https://mmg.example/blob",
+            direct_path="/v/t62/blob",
+            media_key=media_key,
+            file_sha256=hashlib.sha256(plaintext).digest(),
+            file_enc_sha256=encrypted.file_enc_sha256,
+            file_length=len(plaintext),
+        )
+        assert await client.download_media(info) == plaintext
     finally:
         await client.close()
 
