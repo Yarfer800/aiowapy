@@ -712,7 +712,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "cryptography", specifier = ">=42" },
     { name = "protobuf", specifier = ">=5" },
-    { name = "websockets", specifier = ">=12" },
+    { name = "websockets", specifier = ">=15" },
 ]
 
 [package.metadata.requires-dev]

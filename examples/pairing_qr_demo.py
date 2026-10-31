@@ -26,8 +26,10 @@ def main() -> None:
     print(f"  registration id : {credentials.registration_id}")
     print(f"  noise key       : {credentials.noise_public.hex()[:32]}...")
     print(f"  identity key    : {credentials.identity_public.hex()[:32]}...")
-    print(f"  signed prekey   : id={credentials.signed_pre_key.key_id} "
-          f"signature={'valid' if credentials.verify() else 'INVALID'}")
+    print(
+        f"  signed prekey   : id={credentials.signed_pre_key.key_id} "
+        f"signature={'valid' if credentials.verify() else 'INVALID'}"
+    )
     print(f"  adv secret      : {credentials.adv_secret_key}")
     print()
 
@@ -40,8 +42,10 @@ def main() -> None:
     for index, item in enumerate(source, start=1):
         path = OUTPUT_DIR / f"qr-{index}.png"
         path.write_bytes(render_png(item.qr, scale=10))
-        print(f"[{index}/{len(source)}] ttl={item.ttl}s  "
-              f"version={item.qr.version}  size={item.qr.size}x{item.qr.size}")
+        print(
+            f"[{index}/{len(source)}] ttl={item.ttl}s  "
+            f"version={item.qr.version}  size={item.qr.size}x{item.qr.size}"
+        )
         print(f"          payload: {item.payload[:70]}...")
         print(f"          png    : {path}")
         if index == 1:

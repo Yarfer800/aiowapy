@@ -13,7 +13,7 @@ authors = [{ name = "Yarfer", email = "yarfer@rs.me" }]
 dependencies = [
     "cryptography>=42",
     "aiosqlite>=0.20",
-    "websockets>=12",
+    "websockets>=15",
     "protobuf>=5",
 ]
 
