@@ -15,7 +15,7 @@ import aiosqlite
 
 from wapy.errors import StoreError, StoreNotOpenError
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 _PRAGMAS = (
@@ -430,6 +430,71 @@ class SessionStore:
                 "FROM peers p LEFT JOIN messages m ON m.chat_jid = p.jid "
                 "GROUP BY p.jid ORDER BY last_message_at DESC NULLS LAST, p.jid LIMIT ?",
                 (limit,),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [dict(row) for row in rows]
+
+    async def update_message_text(self, chat_jid: str, message_id: str, text: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "UPDATE messages SET text = ? WHERE chat_jid = ? AND message_id = ?",
+                (text, chat_jid, message_id),
+            )
+
+    async def mark_message_deleted(self, chat_jid: str, message_id: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO deleted_messages (chat_jid, message_id) VALUES (?, ?) "
+                "ON CONFLICT(chat_jid, message_id) DO NOTHING",
+                (chat_jid, message_id),
+            )
+            await conn.execute(
+                "UPDATE messages SET text = NULL, media_json = NULL "
+                "WHERE chat_jid = ? AND message_id = ?",
+                (chat_jid, message_id),
+            )
+
+    async def is_message_deleted(self, chat_jid: str, message_id: str) -> bool:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT 1 FROM deleted_messages WHERE chat_jid = ? AND message_id = ?",
+                (chat_jid, message_id),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return row is not None
+
+    async def set_reaction(
+        self,
+        chat_jid: str,
+        message_id: str,
+        sender_jid: str,
+        text: str,
+        *,
+        timestamp: int | None = None,
+    ) -> None:
+        """An empty `text` removes that sender's reaction."""
+        async with self._tx(write=True) as conn:
+            if not text:
+                await conn.execute(
+                    "DELETE FROM reactions WHERE chat_jid = ? AND message_id = ? "
+                    "AND sender_jid = ?",
+                    (chat_jid, message_id, sender_jid),
+                )
+                return
+            await conn.execute(
+                "INSERT INTO reactions (chat_jid, message_id, sender_jid, text, timestamp) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(chat_jid, message_id, sender_jid) "
+                "DO UPDATE SET text = excluded.text, timestamp = excluded.timestamp",
+                (chat_jid, message_id, sender_jid, text, timestamp),
+            )
+
+    async def list_reactions(self, chat_jid: str, message_id: str) -> list[dict[str, Any]]:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM reactions WHERE chat_jid = ? AND message_id = ? ORDER BY timestamp",
+                (chat_jid, message_id),
             )
             rows = await cursor.fetchall()
             await cursor.close()

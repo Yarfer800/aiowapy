@@ -19,10 +19,13 @@ from wapy.events import (
     ChatStateEvent,
     ConnectedEvent,
     DisconnectedEvent,
+    EditEvent,
     MessageEvent,
     NotificationEvent,
     PresenceEvent,
+    ReactionEvent,
     ReceiptEvent,
+    RevokeEvent,
 )
 from wapy.messaging.appstate import AppStateSync, SyncedCollection
 from wapy.messaging.devices import CachedDeviceResolver
@@ -57,7 +60,13 @@ from wapy.protocol.media import (
     MEDIA_VIDEO,
     MediaInfo,
 )
-from wapy.protocol.messages import encode_media
+from wapy.protocol.messages import (
+    QuoteRef,
+    encode_edit,
+    encode_media,
+    encode_reaction,
+    encode_revoke,
+)
 from wapy.protocol.prekeys import pack_key_pair
 from wapy.protocol.presence import (
     PRESENCE_AVAILABLE,
@@ -412,15 +421,87 @@ class WhatsAppClient:
 
     # ------------------------------------------------------------------- outgoing
 
-    async def send_text(self, jid: str, text: str, *, wait_for_message: bool = True) -> SendResult:
+    async def send_text(
+        self,
+        jid: str,
+        text: str,
+        *,
+        quote: str | None = None,
+        wait_for_message: bool = True,
+    ) -> SendResult:
+        """Send text; `quote` is the id of a message to reply to."""
         if not text:
             raise ClientError("text must not be empty")
+        payload = _encode_text_payload(text)
+        if quote is not None:
+            payload = _encode_text_payload(text, await self._quote_ref(jid, quote))
         return await self._deliver(
             jid,
-            _encode_text_payload(text),
+            payload,
             message_type="text",
             wait_for_message=wait_for_message,
         )
+
+    async def _quote_ref(self, chat_jid: str, message_id: str) -> QuoteRef:
+        stored = await self.get_message(chat_jid, message_id)
+        if stored is None:
+            return QuoteRef(chat_jid=chat_jid, message_id=message_id, sender_jid=chat_jid)
+        return QuoteRef(
+            chat_jid=chat_jid,
+            message_id=message_id,
+            sender_jid=stored.sender_jid or chat_jid,
+            text=stored.text,
+        )
+
+    async def send_reaction(
+        self,
+        chat_jid: str,
+        message_id: str,
+        text: str,
+        *,
+        sender_jid: str | None = None,
+        wait_for_message: bool = False,
+    ) -> SendResult:
+        """React with an emoji; pass an empty string to remove your reaction."""
+        payload = encode_reaction(
+            chat_jid,
+            message_id,
+            text,
+            sender_jid=sender_jid if chat_jid.endswith("@g.us") else None,
+            timestamp_ms=int(time.time() * 1000),
+        )
+        return await self._deliver(
+            chat_jid,
+            payload,
+            message_type="reaction",
+            wait_for_message=wait_for_message,
+        )
+
+    async def edit_message(
+        self, chat_jid: str, message_id: str, text: str, *, wait_for_message: bool = True
+    ) -> SendResult:
+        if not text:
+            raise ClientError("text must not be empty")
+        return await self._deliver(
+            chat_jid,
+            encode_edit(chat_jid, message_id, text),
+            message_type="text",
+            wait_for_message=wait_for_message,
+        )
+
+    async def revoke_message(
+        self, chat_jid: str, message_id: str, *, wait_for_message: bool = True
+    ) -> SendResult:
+        return await self._deliver(
+            chat_jid,
+            encode_revoke(chat_jid, message_id),
+            message_type="text",
+            wait_for_message=wait_for_message,
+        )
+
+    async def reactions(self, chat_jid: str, message_id: str) -> list[tuple[str, str]]:
+        rows = await self._require_store().list_reactions(chat_jid, message_id)
+        return [(str(row["sender_jid"]), str(row["text"])) for row in rows]
 
     async def send_group_text(
         self, group_jid: str, text: str, *, wait_for_message: bool = True
@@ -578,6 +659,28 @@ class WhatsAppClient:
         return await self._require_app_state().set_push_name(name)
 
     # ------------------------------------------------------------------ storage
+
+    async def save_message(
+        self,
+        chat_jid: str,
+        message_id: str,
+        text: str | None = None,
+        *,
+        sender_jid: str | None = None,
+        timestamp: int | None = None,
+        media: MediaInfo | None = None,
+        outgoing: bool = False,
+    ) -> None:
+        """Record a message in the session file (useful for history imported from elsewhere)."""
+        await self._require_store().save_message(
+            chat_jid,
+            message_id,
+            sender_jid=sender_jid,
+            timestamp=timestamp,
+            text=text,
+            media_json=json.dumps(media_to_dict(media)) if media is not None else None,
+            outgoing=outgoing,
+        )
 
     async def get_chat_history(
         self, chat_jid: str, limit: int = 100, *, before_timestamp: int | None = None
@@ -860,6 +963,13 @@ class WhatsAppClient:
         ):
             return
 
+        if received.parsed is not None and received.parsed.reaction is not None:
+            await self._handle_reaction(received)
+            return
+        if received.parsed is not None and received.parsed.protocol is not None:
+            await self._handle_protocol_event(received)
+            return
+
         await self._record_incoming(received)
 
         if self._auto_receipts:
@@ -897,6 +1007,60 @@ class WhatsAppClient:
                 raw=node,
             )
         )
+
+    async def _handle_reaction(self, received: ReceivedMessage) -> None:
+        reaction = received.parsed.reaction if received.parsed else None
+        if reaction is None:  # pragma: no cover - guarded by the caller
+            return
+        sender = received.sender_jid
+        await self._require_store().set_reaction(
+            received.chat_jid,
+            reaction.message_id,
+            sender,
+            reaction.text,
+            timestamp=received.timestamp,
+        )
+        self._emit(
+            ReactionEvent(
+                chat_jid=received.chat_jid,
+                sender_jid=sender,
+                message_id=reaction.message_id,
+                text=reaction.text,
+                from_me=sender == (self.info.jid if self.info else None),
+                timestamp=received.timestamp,
+                raw=None,
+            )
+        )
+
+    async def _handle_protocol_event(self, received: ReceivedMessage) -> None:
+        protocol = received.parsed.protocol if received.parsed else None
+        if protocol is None:  # pragma: no cover - guarded by the caller
+            return
+        store = self._require_store()
+        if protocol.kind == "revoke":
+            await store.mark_message_deleted(received.chat_jid, protocol.message_id)
+            self._emit(
+                RevokeEvent(
+                    chat_jid=received.chat_jid,
+                    sender_jid=received.sender_jid,
+                    message_id=protocol.message_id,
+                )
+            )
+            return
+        if protocol.kind == "edit":
+            if protocol.text:
+                await store.update_message_text(
+                    received.chat_jid, protocol.message_id, protocol.text
+                )
+            self._emit(
+                EditEvent(
+                    chat_jid=received.chat_jid,
+                    sender_jid=received.sender_jid,
+                    message_id=protocol.message_id,
+                    text=protocol.text,
+                    timestamp=received.timestamp,
+                )
+            )
 
     async def _accept_app_state_keys(self, keys: tuple[tuple[bytes, bytes], ...]) -> None:
         store = self._require_store()
@@ -1078,7 +1242,7 @@ def default_mime_type(media_type: str) -> str:
     return _DEFAULT_MIME.get(media_type, "application/octet-stream")
 
 
-def _encode_text_payload(text: str) -> bytes:
+def _encode_text_payload(text: str, quote: QuoteRef | None = None) -> bytes:
     from wapy.protocol.messages import encode_text
 
-    return encode_text(text)
+    return encode_text(text, quote=quote)

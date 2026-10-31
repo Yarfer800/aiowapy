@@ -838,3 +838,156 @@ async def test_logged_out_stream_error_stops_reconnecting(tmp_path: Path) -> Non
     await asyncio.wait_for(client.run(), timeout=5)
     assert disconnects and "401" in disconnects[-1].reason
     assert not client.connected
+
+
+async def incoming_payload(
+    credentials: Credentials,
+    payload: bytes,
+    *,
+    message_id: str,
+    one_time_id: int = 5,
+    attrs: dict[str, str] | None = None,
+) -> Node:
+    peer = credentials.peer_identity
+    state = initiator_session(
+        peer,
+        credentials.account.identity_public,
+        credentials.account.signed_pre_key.key_pair.public,
+        credentials.one_time.public,
+        signed_pre_key_id=credentials.account.signed_pre_key.key_id,
+        pre_key_id=one_time_id,
+    )
+    body = prekey_message(state, signal_encrypt(state, payload), registration_id=9)
+    return Node(
+        tag="message",
+        attrs={"id": message_id, "from": PEER, "t": "1700000100", "type": "text", **(attrs or {})},
+        content=[
+            Node(
+                tag="enc",
+                attrs={"v": "2", "type": "pkmsg", "jid": PEER_DEVICE},
+                content=body,
+            )
+        ],
+    )
+
+
+async def test_incoming_reaction_is_stored_and_dispatched(tmp_path: Path) -> None:
+    from wapy.events import ReactionEvent
+    from wapy.protocol.messages import encode_reaction
+
+    client, server, credentials = await connected_client(tmp_path)
+    events: asyncio.Queue[ReactionEvent] = asyncio.Queue()
+    try:
+        client.router.on(ReactionEvent)(events.put_nowait)
+        node = await incoming_payload(
+            credentials,
+            encode_reaction(PEER, "TARGET-1", "\U0001f44d"),
+            message_id="R-1",
+        )
+        server.push(node)
+        event = await asyncio.wait_for(events.get(), timeout=5)
+        assert event.message_id == "TARGET-1"
+        assert event.text == "\U0001f44d"
+        assert event.sender_jid == PEER
+        assert await client.reactions(PEER, "TARGET-1") == [(PEER, "\U0001f44d")]
+    finally:
+        await client.close()
+
+
+async def test_incoming_edit_and_revoke_update_the_stored_message(tmp_path: Path) -> None:
+    from wapy.events import EditEvent, RevokeEvent
+    from wapy.protocol.messages import encode_edit, encode_revoke
+
+    client, server, credentials = await connected_client(tmp_path)
+    edits: asyncio.Queue[EditEvent] = asyncio.Queue()
+    revokes: asyncio.Queue[RevokeEvent] = asyncio.Queue()
+    try:
+        client.router.on(EditEvent)(edits.put_nowait)
+        client.router.on(RevokeEvent)(revokes.put_nowait)
+        await client.save_message(PEER, "M-1", "old text", sender_jid=PEER, timestamp=1000)
+
+        peer = credentials.peer_identity
+        state = initiator_session(
+            peer,
+            credentials.account.identity_public,
+            credentials.account.signed_pre_key.key_pair.public,
+            credentials.one_time.public,
+            signed_pre_key_id=credentials.account.signed_pre_key.key_id,
+            pre_key_id=5,
+        )
+        edit_body = prekey_message(
+            state, signal_encrypt(state, encode_edit(PEER, "M-1", "new text")), registration_id=9
+        )
+        server.push(
+            Node(
+                tag="message",
+                attrs={"id": "E-1", "from": PEER, "t": "1700000100"},
+                content=[
+                    Node(
+                        tag="enc",
+                        attrs={"v": "2", "type": "pkmsg", "jid": PEER_DEVICE},
+                        content=edit_body,
+                    )
+                ],
+            )
+        )
+        edit = await asyncio.wait_for(edits.get(), timeout=5)
+        assert edit.text == "new text"
+        stored = await client.get_message(PEER, "M-1")
+        assert stored is not None and stored.text == "new text"
+
+        server.push(
+            Node(
+                tag="message",
+                attrs={"id": "V-1", "from": PEER, "t": "1700000101"},
+                content=[
+                    Node(
+                        tag="enc",
+                        attrs={"v": "2", "type": "msg", "jid": PEER_DEVICE},
+                        content=signal_encrypt(state, encode_revoke(PEER, "M-1")),
+                    )
+                ],
+            )
+        )
+        revoke = await asyncio.wait_for(revokes.get(), timeout=5)
+        assert revoke.message_id == "M-1"
+        removed = await client.get_message(PEER, "M-1")
+        assert removed is not None and removed.text is None
+    finally:
+        await client.close()
+
+
+async def test_send_reaction_edit_and_revoke(tmp_path: Path) -> None:
+    client, server, _credentials = await connected_client(tmp_path)
+    try:
+        reaction = await client.send_reaction(PEER, "M-1", "\U0001f44d")
+        node = server.nodes("message")[-1]
+        assert node.attrs["type"] == "reaction"
+        assert node.attrs["id"] == reaction.message_id
+        assert node.content[0].content[0].tag == "enc"  # type: ignore[index]
+
+        await client.edit_message(PEER, "M-1", "fixed")
+        assert server.nodes("message")[-1].attrs["type"] == "text"
+
+        await client.revoke_message(PEER, "M-1")
+        assert server.nodes("message")[-1].attrs["type"] == "text"
+    finally:
+        await client.close()
+
+
+async def test_reply_carries_a_quote(tmp_path: Path) -> None:
+    from wapy.protocol.messages import parse_message
+
+    client, server, _credentials = await connected_client(tmp_path)
+    try:
+        await client.save_message(PEER, "ORIGINAL", "question", sender_jid=PEER, timestamp=1000)
+        reference = await client._quote_ref(PEER, "ORIGINAL")
+        from wapy.protocol.messages import encode_text, parse_message
+
+        parsed = parse_message(encode_text("answer", quote=reference))
+        assert parsed.text == "answer"
+        assert parsed.quote is not None
+        assert parsed.quote.message_id == "ORIGINAL"
+        assert parsed.quote.text == "question"
+    finally:
+        await client.close()

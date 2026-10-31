@@ -12,6 +12,7 @@ from wapy.pb import (
     message_field,
     parse_fields,
     varint_field,
+    varint_field_explicit,
 )
 from wapy.protocol.media import (
     MEDIA_AUDIO,
@@ -30,6 +31,13 @@ FIELD_CONVERSATION = 1
 FIELD_SKDM = 2
 FIELD_EXTENDED_TEXT = 6
 FIELD_PROTOCOL = 12
+FIELD_REACTION = 46
+FIELD_QUOTED_CONTEXT = 17
+FIELD_PROTOCOL_KEY = 1
+FIELD_PROTOCOL_TYPE = 2
+FIELD_PROTOCOL_EDITED = 14
+PROTOCOL_REVOKE = 0
+PROTOCOL_MESSAGE_EDIT = 14
 PROTOCOL_FIELD_TYPE = 2
 PROTOCOL_FIELD_KEY_SHARE = 7
 PROTOCOL_APP_STATE_KEY_SHARE = 6
@@ -39,13 +47,91 @@ class MessageError(WapyError):
     """Message payload or node is malformed."""
 
 
-def encode_text(text: str) -> bytes:
-    """Plain text as a `Message` protobuf: `conversation`, or extended text for length."""
+@dataclass(frozen=True, slots=True)
+class QuoteRef:
+    """The message a reply points at."""
+
+    chat_jid: str
+    message_id: str
+    sender_jid: str
+    text: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedQuote:
+    message_id: str
+    sender_jid: str | None = None
+    text: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedReaction:
+    message_id: str
+    text: str
+    sender_jid: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedProtocol:
+    kind: str
+    message_id: str
+    text: str | None = None
+
+
+def _message_key(jid: str, message_id: str, *, participant: str | None = None) -> bytes:
+    body = bytes_field(1, jid.encode("utf-8")) + bytes_field(3, message_id.encode("utf-8"))
+    if participant:
+        body += bytes_field(4, participant.encode("utf-8"))
+    return body
+
+
+def encode_text(text: str, *, quote: QuoteRef | None = None) -> bytes:
+    """Plain text as a `Message` protobuf, optionally replying to another message."""
     if not text:
         raise MessageError("text must not be empty")
+    body = bytes_field(1, text.encode("utf-8"))
+    if quote is not None:
+        context = bytes_field(1, quote.message_id.encode("utf-8"))
+        context += bytes_field(2, quote.sender_jid.encode("utf-8"))
+        if quote.text:
+            context += bytes_field(3, bytes_field(1, quote.text.encode("utf-8")))
+        context += bytes_field(4, quote.chat_jid.encode("utf-8"))
+        body += bytes_field(FIELD_QUOTED_CONTEXT, context)
+        return bytes_field(FIELD_EXTENDED_TEXT, body)
     if len(text) <= 256:
         return bytes_field(1, text.encode("utf-8"))
-    return bytes_field(6, bytes_field(1, text.encode("utf-8")))
+    return bytes_field(6, body)
+
+
+def encode_reaction(
+    chat_jid: str,
+    message_id: str,
+    text: str,
+    *,
+    sender_jid: str | None = None,
+    timestamp_ms: int = 0,
+) -> bytes:
+    """An emoji reaction; an empty `text` retracts a previous one."""
+    key = _message_key(chat_jid, message_id, participant=sender_jid)
+    body = bytes_field(1, key) + bytes_field(2, text.encode("utf-8"))
+    if timestamp_ms:
+        body += varint_field_explicit(4, timestamp_ms)
+    return bytes_field(FIELD_REACTION, body)
+
+
+def encode_edit(chat_jid: str, message_id: str, new_text: str) -> bytes:
+    """Replace the text of a message we sent."""
+    protocol = bytes_field(FIELD_PROTOCOL_KEY, _message_key(chat_jid, message_id))
+    protocol += varint_field_explicit(FIELD_PROTOCOL_TYPE, PROTOCOL_MESSAGE_EDIT)
+    protocol += bytes_field(FIELD_PROTOCOL_EDITED, bytes_field(1, new_text.encode("utf-8")))
+    return bytes_field(FIELD_PROTOCOL, protocol)
+
+
+def encode_revoke(chat_jid: str, message_id: str) -> bytes:
+    """Delete a message for everyone."""
+    protocol = bytes_field(FIELD_PROTOCOL_KEY, _message_key(chat_jid, message_id))
+    protocol += varint_field_explicit(FIELD_PROTOCOL_TYPE, PROTOCOL_REVOKE)
+    return bytes_field(FIELD_PROTOCOL, protocol)
 
 
 def decode_text(payload: bytes) -> str | None:
@@ -167,6 +253,9 @@ class ParsedMessage:
     sender_key_distribution: bytes | None = None
     sender_key_group: str | None = None
     app_state_keys: tuple[tuple[bytes, bytes], ...] = ()
+    quote: ParsedQuote | None = None
+    reaction: ParsedReaction | None = None
+    protocol: ParsedProtocol | None = None
 
 
 _MEDIA_FIELDS = {
@@ -185,9 +274,23 @@ def parse_message(payload: bytes) -> ParsedMessage:
         return ParsedMessage(text=conversation.decode("utf-8", errors="replace"))
     extended = fields.get(FIELD_EXTENDED_TEXT)
     if extended:
-        text = first_bytes(parse_fields(first_bytes(fields, FIELD_EXTENDED_TEXT)), 1)
+        inner = parse_fields(first_bytes(fields, FIELD_EXTENDED_TEXT))
+        text = first_bytes(inner, 1)
+        quote = _parse_quote(_maybe_bytes(inner, FIELD_QUOTED_CONTEXT))
         if text:
-            return ParsedMessage(text=text.decode("utf-8", errors="replace"))
+            return ParsedMessage(text=text.decode("utf-8", errors="replace"), quote=quote)
+
+    reaction = _maybe_bytes(fields, FIELD_REACTION)
+    if reaction:
+        inner = parse_fields(reaction)
+        key = parse_fields(_maybe_bytes(inner, 1) or b"")
+        return ParsedMessage(
+            reaction=ParsedReaction(
+                message_id=first_bytes(key, 3).decode("utf-8", errors="replace"),
+                text=first_bytes(inner, 2).decode("utf-8", errors="replace"),
+                sender_jid=_maybe_text(key, 4),
+            )
+        )
 
     protocol = _maybe_bytes(fields, FIELD_PROTOCOL)
     if protocol:
@@ -197,6 +300,12 @@ def parse_message(payload: bytes) -> ParsedMessage:
             keys = ()
         if keys:
             return ParsedMessage(app_state_keys=keys)
+        try:
+            parsed_protocol = _parse_protocol(protocol)
+        except ProtobufError:
+            parsed_protocol = None
+        if parsed_protocol is not None:
+            return ParsedMessage(protocol=parsed_protocol)
 
     raw_skdm = _maybe_bytes(fields, FIELD_SKDM)
     if raw_skdm:
@@ -288,6 +397,45 @@ def _parse_media_body(body: bytes, media_type: str) -> MediaInfo:
         height=first_int(fields, 6) or None,
         media_key_timestamp=first_int(fields, 10) or None,
     )
+
+
+def _parse_protocol(protocol: bytes) -> ParsedProtocol | None:
+    inner = parse_fields(protocol)
+    kind = first_int(inner, FIELD_PROTOCOL_TYPE)
+    key = parse_fields(_maybe_bytes(inner, FIELD_PROTOCOL_KEY) or b"")
+    message_id = first_bytes(key, 3).decode("utf-8", errors="replace")
+    if kind == PROTOCOL_REVOKE:
+        return ParsedProtocol(kind="revoke", message_id=message_id)
+    if kind == PROTOCOL_MESSAGE_EDIT:
+        edited = parse_fields(_maybe_bytes(inner, FIELD_PROTOCOL_EDITED) or b"")
+        text = first_bytes(edited, 1) or first_bytes(parse_fields(first_bytes(edited, 6)), 1)
+        return ParsedProtocol(
+            kind="edit",
+            message_id=message_id,
+            text=text.decode("utf-8", errors="replace") if text else None,
+        )
+    return None
+
+
+def _parse_quote(context: bytes | None) -> ParsedQuote | None:
+    if not context:
+        return None
+    inner = parse_fields(context)
+    message_id = first_bytes(inner, 1).decode("utf-8", errors="replace")
+    if not message_id:
+        return None
+    quoted = parse_fields(_maybe_bytes(inner, 3) or b"")
+    text = first_bytes(quoted, 1) or first_bytes(parse_fields(first_bytes(quoted, 6)), 1)
+    return ParsedQuote(
+        message_id=message_id,
+        sender_jid=_maybe_text(inner, 2),
+        text=text.decode("utf-8", errors="replace") if text else None,
+    )
+
+
+def _maybe_text(fields: dict[int, list[object]], number: int) -> str | None:
+    value = _maybe_bytes(fields, number)
+    return value.decode("utf-8", errors="replace") if value else None
 
 
 def _app_state_keys(protocol: bytes) -> tuple[tuple[bytes, bytes], ...]:

@@ -22,6 +22,37 @@ class MessageEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ReactionEvent:
+    """An emoji reaction; `text` is empty when the reaction was retracted."""
+
+    chat_jid: str
+    sender_jid: str
+    message_id: str
+    text: str
+    from_me: bool = False
+    timestamp: int | None = None
+    raw: Node | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EditEvent:
+    chat_jid: str
+    sender_jid: str
+    message_id: str
+    text: str | None
+    timestamp: int | None = None
+    raw: Node | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RevokeEvent:
+    chat_jid: str
+    sender_jid: str
+    message_id: str
+    raw: Node | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ReceiptEvent:
     """Delivery or read confirmation, for one message or a batch of them."""
 
@@ -73,6 +104,9 @@ class NotificationEvent:
 
 AnyEvent = (
     MessageEvent
+    | ReactionEvent
+    | EditEvent
+    | RevokeEvent
     | ReceiptEvent
     | PresenceEvent
     | ChatStateEvent
