@@ -28,6 +28,14 @@ def log_node(node: object) -> None:
     print(f"  <- {tag} {attrs}", flush=True)
 
 
+def log_sent(node: object) -> None:
+    tag = getattr(node, "tag", "?")
+    attrs = getattr(node, "attrs", {})
+    content = getattr(node, "content", None)
+    size = len(content) if isinstance(content, bytes) else "-"
+    print(f"  -> {tag} {attrs} content={size}B", flush=True)
+
+
 def show_qr(item: PairingQr) -> None:
     print(render_ascii(item.qr, border=1), flush=True)
     print(f"scan now - this code lives {item.ttl}s\n", flush=True)
@@ -43,6 +51,7 @@ async def main() -> int:
         transport_factory=lambda: WhatsAppTransport(proxy=proxy, timeout=25),
         qr_callback=show_qr,
         node_observer=log_node,
+        sent_observer=log_sent,
         platform=platform,
     )
     state = await session.run()

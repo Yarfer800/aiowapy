@@ -266,3 +266,18 @@ async def test_restart_after_pairing_persists_the_account(session_path: Path) ->
         stored = await store.load_creds()
     assert stored is not None and stored["me"]["id"].endswith("@s.whatsapp.net")
     assert 1 in parse_fields(ScriptedTransport.handshakes[1])  # login payload
+
+
+def test_parse_stream_error_from_attribute() -> None:
+    error = parse_stream_error(Node(tag="stream:error", attrs={"code": "515"}))
+    assert error is not None and error.code == 515
+
+
+def test_parse_stream_error_prefers_child_code() -> None:
+    node = Node(
+        tag="stream:error",
+        attrs={"code": "401"},
+        content=[Node(tag="code", attrs={}, content=b"515")],
+    )
+    error = parse_stream_error(node)
+    assert error is not None and error.code == 515

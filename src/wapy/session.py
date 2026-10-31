@@ -73,19 +73,23 @@ class StreamError:
 
 
 def parse_stream_error(node: Node) -> StreamError | None:
-    """Recognise `<stream:error><code>515</code><text>...</text></stream:error>`."""
+    """Recognise a stream error given either as an attribute or as child nodes.
+
+    Observed in the wild: `<stream:error code="515"/>`, while the reference client
+    also handles `<stream:error><code>515</code><text>...</text></stream:error>`.
+    """
     if node.tag != "stream:error":
         return None
     code_node = child(node, "code")
     text_node = child(node, "text")
-    if code_node is None:
+    raw: object = code_node.content if code_node is not None else node.attrs.get("code")
+    if raw is None:
         return None
-    raw = code_node.content
-    text = text_node.content if text_node is not None else b""
     try:
         code = int(raw.decode() if isinstance(raw, bytes) else str(raw))
     except (TypeError, ValueError):
         return None
+    text: object = text_node.content if text_node is not None else node.attrs.get("text", "")
     message = text.decode(errors="replace") if isinstance(text, bytes) else str(text)
     return StreamError(code=code, text=message)
 
@@ -108,6 +112,7 @@ class ClientSession:
         transport_factory: Callable[[], Transport],
         qr_callback: Callable[[PairingQr], Awaitable[None] | None] | None = None,
         node_observer: Callable[[Node], None] | None = None,
+        sent_observer: Callable[[Node], None] | None = None,
         platform: str = "chrome",
         version: tuple[int, int, int] = DEFAULT_VERSION,
         max_attempts: int = 4,
@@ -116,6 +121,7 @@ class ClientSession:
         self._factory = transport_factory
         self._qr_callback = qr_callback
         self._observer = node_observer
+        self._sent_observer = sent_observer
         self._platform = platform
         self._version = version
         self._max_attempts = max_attempts
@@ -291,14 +297,18 @@ class ClientSession:
         state.lid = None
         await store.save_creds(state.credentials.to_dict())
 
+    async def _send(self, transport: Transport, node: Node) -> None:
+        if self._sent_observer is not None:
+            self._sent_observer(node)
+        await transport.send_encrypted(encode_node(node))
+
     async def _ack(self, transport: Transport, node: Node) -> None:
-        await transport.send_encrypted(
-            encode_node(
-                Node(
-                    tag="iq",
-                    attrs={"to": S_WHATSAPP_NET, "type": "result", "id": node.attrs.get("id", "")},
-                )
-            )
+        await self._send(
+            transport,
+            Node(
+                tag="iq",
+                attrs={"to": S_WHATSAPP_NET, "type": "result", "id": node.attrs.get("id", "")},
+            ),
         )
 
     @staticmethod
@@ -322,7 +332,7 @@ class ClientSession:
         pair: PairSuccess = parse_pair_success(node, message_id=node.attrs.get("id", ""))
         identity, key_index = verify_pair_success(pair, state.credentials)
         reply = build_pair_device_sign_reply(node.attrs["id"], identity, key_index=key_index)
-        await transport.send_encrypted(encode_node(reply))
+        await self._send(transport, reply)
         state.jid = pair.jid
         state.lid = pair.lid
         state.paired = True
