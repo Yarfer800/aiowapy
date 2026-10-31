@@ -31,10 +31,11 @@ from wapy.protocol.pairing import (
 )
 from wapy.protocol.pairing_code import (
     CompanionFinishRequest,
-    PairingCodeError,
     build_companion_finish,
     build_companion_hello,
+    has_wrapped_primary_ephemeral,
     parse_companion_finish,
+    parse_pairing_ref,
 )
 from wapy.protocol.prekeys import (
     INITIAL_PREKEY_COUNT,
@@ -263,7 +264,8 @@ class ClientSession:
                         iv=secrets.token_bytes(16),
                     ),
                 )
-                request = await self._await_companion_finish(transport)
+                pairing_ref = await self._await_pairing_ref(transport)
+                request = await self._await_companion_finish(transport, pairing_ref)
                 finish_node, adv_secret = build_companion_finish(
                     state.credentials,
                     request,
@@ -290,41 +292,51 @@ class ClientSession:
                     await keepalive
                 await transport.close()
 
-    async def _await_companion_finish(self, transport: Transport) -> CompanionFinishRequest:
+    async def _await_pairing_ref(self, transport: Transport) -> bytes | None:
+        """The first iq result after companion_hello carries the pairing ref."""
         while True:
-            try:
-                frame = await transport.recv_encrypted()
-            except (ConnectionError, OSError) as exc:
-                raise SessionError("connection closed before the phone confirmed") from exc
-            except Exception as exc:
-                if type(exc).__name__.startswith("ConnectionClosed"):
-                    raise SessionError("connection closed before the phone confirmed") from exc
-                raise
-            node = decode_node(frame)
-            if self._observer is not None:
-                self._observer(node)
-            self._last_recv = time.monotonic()
-            try:
-                return parse_companion_finish(node)
-            except PairingCodeError:
+            node = await self._recv_node(transport, "the server did not confirm the code")
+            ref = parse_pairing_ref(node)
+            if ref is not None:
+                return ref
+            if node.tag == "failure":
+                raise SessionError(f"pairing rejected: {node.attrs}")
+
+    async def _recv_node(self, transport: Transport, context: str) -> Node:
+        try:
+            frame = await transport.recv_encrypted()
+        except (ConnectionError, OSError) as exc:
+            raise SessionError(f"connection closed while {context}") from exc
+        except Exception as exc:
+            if type(exc).__name__.startswith("ConnectionClosed"):
+                raise SessionError(f"connection closed while {context}") from exc
+            raise
+        self._last_recv = time.monotonic()
+        node = decode_node(frame)
+        if self._observer is not None:
+            self._observer(node)
+        return node
+
+    async def _await_companion_finish(
+        self, transport: Transport, pairing_ref: bytes | None = None
+    ) -> CompanionFinishRequest:
+        while True:
+            node = await self._recv_node(transport, "waiting for the phone to confirm")
+            if not has_wrapped_primary_ephemeral(node):
+                # `primary_hello` and other intermediate notifications carry no key.
+                if node.tag == "failure":
+                    raise SessionError(f"pairing rejected: {node.attrs}")
                 continue
+            request = parse_companion_finish(node)
+            if pairing_ref is not None and request.ref != pairing_ref:
+                raise SessionError("pairing ref from the notification does not match")
+            return request
 
     async def _await_success(
         self, transport: Transport, state: SessionState, store: SessionStore
     ) -> None:
         while True:
-            try:
-                frame = await transport.recv_encrypted()
-            except (ConnectionError, OSError) as exc:
-                raise SessionError("connection closed before pairing completed") from exc
-            except Exception as exc:
-                if type(exc).__name__.startswith("ConnectionClosed"):
-                    raise SessionError("connection closed before pairing completed") from exc
-                raise
-            node = decode_node(frame)
-            if self._observer is not None:
-                self._observer(node)
-            self._last_recv = time.monotonic()
+            node = await self._recv_node(transport, "waiting for pairing to complete")
             if node.tag == "success":
                 jid = node.attrs.get("jid")
                 lid = node.attrs.get("lid")

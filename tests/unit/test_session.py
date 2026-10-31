@@ -337,6 +337,20 @@ async def test_failure_401_on_paired_session_is_reported(session_path: Path) -> 
     assert stored is not None and "me" not in stored
 
 
+def _pairing_ref_node(ref: bytes = b"ref") -> Node:
+    return Node(
+        tag="iq",
+        attrs={"type": "result", "id": "hello"},
+        content=[
+            Node(
+                tag="link_code_companion_reg",
+                attrs={"stage": "primary_hello"},
+                content=[Node(tag="link_code_pairing_ref", attrs={}, content=ref)],
+            )
+        ],
+    )
+
+
 def _companion_finish_node(
     server_ephemeral_public: bytes, primary_identity_public: bytes, code: str
 ) -> Node:
@@ -379,6 +393,7 @@ async def test_pairing_by_phone_number_completes(
     primary_identity = generate_keypair()
     ScriptedTransport.scripts = [
         [
+            _pairing_ref_node(),
             _companion_finish_node(server_ephemeral.public, primary_identity.public, code),
             Node(tag="success", attrs={}),
         ]
@@ -418,6 +433,7 @@ async def test_phone_pairing_rejects_a_failure(session_path: Path) -> None:
 
     ScriptedTransport.scripts = [
         [
+            _pairing_ref_node(),
             _companion_finish_node(
                 generate_keypair().public, generate_keypair().public, "ABCD1234"
             ),

@@ -149,6 +149,24 @@ def build_companion_hello(
     )
 
 
+def parse_pairing_ref(node: Node) -> bytes | None:
+    """`link_code_pairing_ref` arrives in the response to companion_hello."""
+    registration = child(node, "link_code_companion_reg")
+    if registration is None:
+        return None
+    ref_node = child(registration, "link_code_pairing_ref")
+    if ref_node is None or not isinstance(ref_node.content, bytes):
+        return None
+    return ref_node.content
+
+
+def has_wrapped_primary_ephemeral(node: Node) -> bool:
+    registration = child(node, "link_code_companion_reg")
+    if registration is None:
+        return False
+    return child(registration, "link_code_pairing_wrapped_primary_ephemeral_pub") is not None
+
+
 @dataclass(frozen=True, slots=True)
 class CompanionFinishRequest:
     ref: bytes
@@ -163,8 +181,10 @@ def parse_companion_finish(node: Node) -> CompanionFinishRequest:
         raise PairingCodeError("node carries no link_code_companion_reg")
     # The server pushes this as a `notification` with no stage attribute, so the
     # presence of the pairing fields is the only reliable signal.
+    # The server sends an intermediate `primary_hello` notification first, without
+    # the wrapped key; callers filter those out with `has_wrapped_primary_ephemeral`.
     stage = registration.attrs.get("stage")
-    if stage is not None and stage != "companion_finish":
+    if stage is not None and stage not in ("companion_finish", "primary_hello"):
         raise PairingCodeError(f"unexpected stage: {stage!r}")
 
     def payload(tag: str) -> bytes:
