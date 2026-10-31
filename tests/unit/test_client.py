@@ -686,3 +686,61 @@ async def test_app_state_keys_are_stored_and_synced(tmp_path: Path) -> None:
         assert expand_keys(key_data).value_mac != hkdf(key_data, 32, b"x")
     finally:
         await client.close()
+
+
+async def test_reconnect_after_a_dropped_connection(tmp_path: Path) -> None:
+    credentials = generate_credentials()
+    server = FakeServer()
+    path = tmp_path / "bot.session"
+    await seeded_store(path, credentials)
+    client = WhatsAppClient(
+        path,
+        transport_factory=lambda: server,
+        push_name="bot",
+        reconnect_delay=0.05,
+        max_reconnect_delay=0.05,
+    )
+    connects: list[ConnectedEvent] = []
+    client.router.on(ConnectedEvent)(connects.append)
+    server.push(Node(tag="success", attrs={"jid": ME}))
+    await asyncio.wait_for(client.connect(), timeout=5)
+    try:
+        server.inbox.put_nowait(None)  # drop the connection
+        for _ in range(200):
+            if connects:
+                break
+            await asyncio.sleep(0.01)
+        server.push(Node(tag="success", attrs={"jid": ME}))
+        for _ in range(200):
+            if client.connected and connects:
+                break
+            await asyncio.sleep(0.01)
+        assert connects, "the client never reconnected"
+        assert client.connected
+    finally:
+        await client.close()
+
+
+async def test_logged_out_stream_error_stops_reconnecting(tmp_path: Path) -> None:
+    credentials = generate_credentials()
+    server = FakeServer()
+    path = tmp_path / "bot.session"
+    await seeded_store(path, credentials)
+    client = WhatsAppClient(
+        path,
+        transport_factory=lambda: server,
+        reconnect_delay=0.05,
+        max_reconnect_delay=0.05,
+    )
+    disconnects: list[DisconnectedEvent] = []
+    server.push(Node(tag="success", attrs={"jid": ME}))
+    await asyncio.wait_for(client.connect(), timeout=5)
+    client.router.on(DisconnectedEvent)(disconnects.append)
+    server.push(Node(tag="stream:error", attrs={"code": "401"}))
+    for _ in range(200):
+        if disconnects:
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.wait_for(client.run(), timeout=5)
+    assert disconnects and "401" in disconnects[-1].reason
+    assert not client.connected

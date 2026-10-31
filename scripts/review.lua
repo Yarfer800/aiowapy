@@ -38,7 +38,35 @@ local function review_path()
     return state.ws .. "/REVIEW.md"
 end
 
+local function open_notes_buffer(path)
+    local buf = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_buf_set_name(buf, path)
+    local lines = {}
+    local fd = io.open(path, "r")
+    if fd then
+        for line in fd:lines() do
+            lines[#lines + 1] = line
+        end
+        fd:close()
+    end
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    -- A broken FileType autocmd must not break the review session.
+    pcall(function()
+        vim.bo[buf].filetype = "markdown"
+    end)
+    pcall(function()
+        vim.bo[buf].syntax = "markdown"
+    end)
+    vim.bo[buf].modified = false
+    return buf
+end
+
 local function open_code(index)
+    local dbf = io.open("/tmp/opencode/review/open_code.log", "a")
+    if dbf then
+        dbf:write(tostring(index), " ", debug.traceback(), "\n")
+        dbf:close()
+    end
     local file = state.files[index]
     if not file then
         return
@@ -46,11 +74,11 @@ local function open_code(index)
     state.index = index
 
     vim.api.nvim_set_current_win(state.old_win)
-    vim.cmd("silent edit! " .. vim.fn.fnameescape(file.old))
+    pcall(vim.cmd, "silent edit! " .. vim.fn.fnameescape(file.old))
     vim.cmd("diffthis")
 
     vim.api.nvim_set_current_win(state.new_win)
-    vim.cmd("silent edit! " .. vim.fn.fnameescape(file.path))
+    pcall(vim.cmd, "silent edit! " .. vim.fn.fnameescape(file.path))
     vim.cmd("diffthis")
     vim.cmd("silent diffupdate")
 
@@ -118,11 +146,14 @@ local function has_note(lines)
 end
 
 local function push_body(out, body)
-    local last = #body
-    while last > 0 and trim(body[last]) == "" do
+    local first, last = 1, #body
+    while first <= last and trim(body[first]) == "" do
+        first = first + 1
+    end
+    while last >= first and trim(body[last]) == "" do
         last = last - 1
     end
-    for i = 1, last do
+    for i = first, last do
         out[#out + 1] = body[i]
     end
 end
@@ -230,7 +261,25 @@ end
 
 local M = {}
 
+local function dbg(msg)
+    local fd = io.open("/tmp/opencode/review/dbg.log", "a")
+    if fd then
+        fd:write(msg, "\n")
+        fd:close()
+    end
+end
+
 function M.setup(manifest_path)
+    dbg("setup start")
+    -- A restored session or a plugin's VimEnter hook may have left windows
+    -- behind; the review layout starts from an empty tab.
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if win ~= vim.api.nvim_get_current_win() then
+            pcall(vim.api.nvim_win_close, win, true)
+        end
+    end
+    pcall(vim.cmd, "silent tabonly")
+
     local manifest = read_json(manifest_path)
     state.ws = manifest.workspace
     state.files = manifest.files
@@ -238,15 +287,16 @@ function M.setup(manifest_path)
         error("review: manifest has no files")
     end
 
-    vim.cmd("silent edit! " .. vim.fn.fnameescape(state.files[1].old))
+    pcall(vim.cmd, "silent edit! " .. vim.fn.fnameescape(state.files[1].old))
     state.old_win = vim.api.nvim_get_current_win()
 
-    vim.cmd("silent vsplit " .. vim.fn.fnameescape(state.files[1].path))
+    vim.cmd("silent vsplit")
     state.new_win = vim.api.nvim_get_current_win()
 
-    vim.cmd("silent vsplit " .. vim.fn.fnameescape(review_path()))
+    vim.cmd("silent vsplit")
     state.review_win = vim.api.nvim_get_current_win()
-    state.review_buf = vim.api.nvim_win_get_buf(state.review_win)
+    state.review_buf = open_notes_buffer(review_path())
+    vim.api.nvim_win_set_buf(state.review_win, state.review_buf)
 
     vim.api.nvim_set_current_win(state.review_win)
     vim.wo[state.review_win].wrap = true
@@ -256,10 +306,20 @@ function M.setup(manifest_path)
     local width = math.max(40, math.floor(vim.o.columns * 0.35))
     vim.api.nvim_win_set_width(state.review_win, width)
 
+    dbg("layout ready")
     open_code(1)
     vim.api.nvim_set_current_win(state.review_win)
 
     setup_keys(state.review_buf)
+
+    -- Start the cursor on the first hunk so `o` writes a note in the right place.
+    local review_lines = vim.api.nvim_buf_get_lines(state.review_buf, 0, -1, false)
+    for index, line in ipairs(review_lines) do
+        if line:match("^###%s") then
+            vim.api.nvim_win_set_cursor(state.review_win, { index, 0 })
+            break
+        end
+    end
 
     local group = vim.api.nvim_create_augroup("ReviewSession", { clear = true })
     vim.api.nvim_create_autocmd("VimLeavePre", {
@@ -278,11 +338,13 @@ function M.setup(manifest_path)
     })
 end
 
+M.jump = jump_from_anchor
+
 function M.finish()
     save_review()
     write_comments()
     vim.cmd("silent! wall")
-    vim.cmd("qa")
+    vim.cmd("qa!")
 end
 
 vim.api.nvim_create_user_command("ReviewDone", function()
@@ -297,6 +359,27 @@ vim.api.nvim_create_user_command("ReviewPrev", function()
     step(-1)
 end, { desc = "Open the previous reviewed file" })
 
+function _G.ReviewJump()
+    M.jump()
+end
+
 function _G.ReviewSetup(manifest_path)
-    M.setup(manifest_path)
+    -- Session managers would restore an unrelated layout on top of the review.
+    vim.g.auto_session_enabled = false
+
+    if vim.v.vim_did_enter == 1 then
+        M.setup(manifest_path)
+        return
+    end
+    vim.api.nvim_create_autocmd("VimEnter", {
+        once = true,
+        callback = function()
+            dbg("vimenter")
+            vim.schedule(function()
+                dbg("scheduled")
+                local ok, err = pcall(M.setup, manifest_path)
+                dbg("setup done ok=" .. tostring(ok) .. " err=" .. tostring(err))
+            end)
+        end,
+    })
 end

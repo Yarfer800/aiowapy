@@ -144,7 +144,12 @@ class AppStateSync:
         *,
         version: int = 2,
     ) -> int:
-        """Push SET mutations for one collection and return the new version."""
+        """Push SET mutations for one collection and return the new version.
+
+        `version` is the per-index protocol version the reference client uses for the
+        action (mute 2, mark-as-read 3, pin 5, push name 1); it is not the patch
+        version, which is derived from the local state.
+        """
         _require_collection(name)
         if not mutations:
             raise AppStateSyncError("nothing to send")
@@ -189,11 +194,15 @@ class AppStateSync:
 
     async def mute(self, chat_jid: str, muted: bool, *, until_ms: int | None = None) -> int:
         return await self.send_patch(
-            REGULAR_HIGH, [(("mute", chat_jid), mute_action(muted, until_ms=until_ms))]
+            REGULAR_HIGH,
+            [(("mute", chat_jid), mute_action(muted, until_ms=until_ms))],
+            version=2,
         )
 
     async def pin(self, chat_jid: str, pinned: bool) -> int:
-        return await self.send_patch(REGULAR_LOW, [(("pin_v1", chat_jid), pin_action(pinned))])
+        return await self.send_patch(
+            REGULAR_LOW, [(("pin_v1", chat_jid), pin_action(pinned))], version=5
+        )
 
     async def mark_chat_read(
         self, chat_jid: str, read: bool, *, last_message_ts: int | None = None
@@ -201,11 +210,12 @@ class AppStateSync:
         return await self.send_patch(
             REGULAR_LOW,
             [(("markChatAsRead", chat_jid), read_action(read, last_message_ts=last_message_ts))],
+            version=3,
         )
 
     async def set_push_name(self, name: str) -> int:
         return await self.send_patch(
-            CRITICAL_BLOCK, [(("setting_pushName",), push_name_action(name))]
+            CRITICAL_BLOCK, [(("setting_pushName",), push_name_action(name))], version=1
         )
 
     # -- internals ----------------------------------------------------------

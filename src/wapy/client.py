@@ -86,6 +86,7 @@ KEEPALIVE_TIMEOUT = 35.0
 MAX_RECONNECT_DELAY = 30.0
 MAX_TRACKED_RETRIES = 512
 OUTBOX_LIMIT = 256
+LOGGED_OUT_CODES = {401, 403, 409}
 
 
 class ClientError(WapyError):
@@ -133,6 +134,8 @@ class WhatsAppClient:
         node_observer: Callable[[Node], None] | None = None,
         sent_observer: Callable[[Node], None] | None = None,
         reconnect: bool = True,
+        reconnect_delay: float = 1.0,
+        max_reconnect_delay: float = MAX_RECONNECT_DELAY,
     ) -> None:
         self.router = Router()
         self.push_name = push_name
@@ -146,6 +149,8 @@ class WhatsAppClient:
         self._observer = node_observer
         self._sent_observer = sent_observer
         self._reconnect = reconnect
+        self._reconnect_delay = reconnect_delay
+        self._max_reconnect_delay = max_reconnect_delay
 
         self._store: SessionStore | None = None
         self._stream: NodeStream | None = None
@@ -163,6 +168,8 @@ class WhatsAppClient:
         self._ready = asyncio.Event()
         self._done = asyncio.Event()
         self._closed = False
+        self._stop_reconnect = False
+        self._last_error: str | None = None
         self._runner: asyncio.Task[None] | None = None
         self._worker: asyncio.Task[None] | None = None
         self._keepalive: asyncio.Task[None] | None = None
@@ -194,6 +201,7 @@ class WhatsAppClient:
             await self._store.save_creds(generate_credentials().to_dict())
 
         self._closed = False
+        self._stop_reconnect = False
         self._done.clear()
         self._runner = asyncio.create_task(self._connection_loop(), name="wapy-connect")
         ready = asyncio.create_task(self._ready.wait(), name="wapy-ready")
@@ -224,7 +232,9 @@ class WhatsAppClient:
         self._closed = True
         stream = self._stream
         if stream is not None:
-            await stream.close()
+            # Close from a separate task: this handler runs inside the dispatch
+            # worker, and that worker is cancelled as part of the shutdown.
+            asyncio.get_running_loop().create_task(stream.close(), name="wapy-close")
         await self._shutdown()
 
     async def __aenter__(self) -> WhatsAppClient:
@@ -249,7 +259,7 @@ class WhatsAppClient:
         self._done.set()
 
     async def _connection_loop(self) -> None:
-        delay = 1.0
+        delay = self._reconnect_delay
         while not self._closed:
             reason = "connection closed"
             try:
@@ -281,12 +291,15 @@ class WhatsAppClient:
                 self._ready.clear()
                 self._stream = None
                 self.info = None
+                if self._last_error is not None:
+                    reason = self._last_error
+                    self._last_error = None
             await self.router.dispatch(DisconnectedEvent(reason=reason))
-            if self._closed or not self._reconnect:
+            if self._closed or self._stop_reconnect or not self._reconnect:
                 break
             logger.info("reconnecting in %.0fs: %s", delay, reason)
             await asyncio.sleep(delay)
-            delay = min(delay * 2, MAX_RECONNECT_DELAY)
+            delay = min(delay * 2, self._max_reconnect_delay)
         if not self._closed:
             self._done.set()
 
@@ -325,11 +338,7 @@ class WhatsAppClient:
             await self._announce_presence()
             await stream.wait_closed()
         finally:
-            for task in (self._worker, self._keepalive):
-                if task is not None and not task.done():
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await task
+            await self._stop_tasks(self._worker, self._keepalive)
             self._worker = self._keepalive = None
             self._ready.clear()
 
@@ -345,6 +354,17 @@ class WhatsAppClient:
             StoreSignalSessionsWithDecrypt(self._store, state.credentials),
             ack_timeout=self._ack_timeout,
         )
+
+    @staticmethod
+    async def _stop_tasks(*tasks: asyncio.Task[None] | None) -> None:
+        """Cancel helper tasks, never the caller and never twice."""
+        current = asyncio.current_task()
+        for task in tasks:
+            if task is None or task is current or task.done():
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
     async def _keepalive_loop(self, stream: NodeStream) -> None:
         while not stream.closed:
@@ -765,9 +785,16 @@ class WhatsAppClient:
         except ValueError:
             code = 0
         logger.warning("stream error %s: %s", code, node.attrs)
+        self._last_error = f"stream error {code}"
+        if code in LOGGED_OUT_CODES:
+            # The server dropped this device: reconnecting would only repeat the
+            # rejection, and pairing again is the user's decision, not ours.
+            self._stop_reconnect = True
         stream = self._stream
         if stream is not None:
-            await stream.close()
+            # Close from a separate task: this handler runs inside the dispatch
+            # worker, and that worker is cancelled as part of the shutdown.
+            asyncio.get_running_loop().create_task(stream.close(), name="wapy-close")
 
     async def _ack_request(self, node: Node) -> None:
         await self._require_stream().send(
