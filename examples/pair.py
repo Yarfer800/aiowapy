@@ -32,8 +32,10 @@ def log_sent(node: object) -> None:
     tag = getattr(node, "tag", "?")
     attrs = getattr(node, "attrs", {})
     content = getattr(node, "content", None)
-    size = len(content) if isinstance(content, bytes) else "-"
-    print(f"  -> {tag} {attrs} content={size}B", flush=True)
+    if isinstance(content, bytes):
+        print(f"  -> {tag} {attrs} content={len(content)}B {content.hex()[:120]}", flush=True)
+    else:
+        print(f"  -> {tag} {attrs}", flush=True)
 
 
 def show_qr(item: PairingQr) -> None:
