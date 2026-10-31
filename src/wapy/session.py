@@ -1,0 +1,239 @@
+"""Session orchestration: connect, pair if needed, survive the 515 restart.
+
+WhatsApp closes the connection with a `stream:error` code 515 right after a device
+is linked and expects the client to come back with a *login* payload. This module
+owns that state machine, so the QR flow and the reconnect are testable without a
+network.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from wapy.creds import DeviceCredentials, generate_credentials
+from wapy.errors import WapyError
+from wapy.pairing import PairingQr, PairingQrSource
+from wapy.protocol.client_payload import build_login_payload, build_registration_payload
+from wapy.protocol.pairing import (
+    PairSuccess,
+    build_pair_device_sign_reply,
+    parse_pair_success,
+    verify_pair_success,
+)
+from wapy.protocol.stream import child, children
+from wapy.protocol.wabinary import Node, decode_node, encode_node
+from wapy.store import SessionStore
+
+S_WHATSAPP_NET = "s.whatsapp.net"
+DEFAULT_VERSION = (2, 3000, 1043857760)
+STREAM_ERROR_RESTART = 515
+STREAM_ERROR_LOGGED_OUT = {401, 403, 409}
+
+QR_FIRST_TTL = 60
+QR_NEXT_TTL = 20
+
+
+class SessionError(WapyError):
+    """The session could not be established."""
+
+
+class Transport(Protocol):
+    async def connect(self) -> None: ...
+    async def close(self) -> None: ...
+    async def handshake(
+        self, key_pair: object = None, client_payload: bytes = b"", **kwargs: object
+    ) -> object: ...
+    async def send_encrypted(self, payload: bytes) -> None: ...
+    async def recv_encrypted(self) -> bytes: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StreamError:
+    code: int
+    text: str
+
+
+def parse_stream_error(node: Node) -> StreamError | None:
+    """Recognise `<stream:error><code>515</code><text>...</text></stream:error>`."""
+    if node.tag != "stream:error":
+        return None
+    code_node = child(node, "code")
+    text_node = child(node, "text")
+    if code_node is None:
+        return None
+    raw = code_node.content
+    text = text_node.content if text_node is not None else b""
+    try:
+        code = int(raw.decode() if isinstance(raw, bytes) else str(raw))
+    except (TypeError, ValueError):
+        return None
+    message = text.decode(errors="replace") if isinstance(text, bytes) else str(text)
+    return StreamError(code=code, text=message)
+
+
+@dataclass(slots=True)
+class SessionState:
+    credentials: DeviceCredentials
+    paired: bool = False
+    jid: str | None = None
+    lid: str | None = None
+
+
+class ClientSession:
+    """One session file, one logical connection, reconnect handling included."""
+
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        transport_factory: Callable[[], Transport],
+        qr_callback: Callable[[PairingQr], Awaitable[None] | None] | None = None,
+        platform: str = "chrome",
+        version: tuple[int, int, int] = DEFAULT_VERSION,
+        max_attempts: int = 4,
+    ) -> None:
+        self._path = Path(path)
+        self._factory = transport_factory
+        self._qr_callback = qr_callback
+        self._platform = platform
+        self._version = version
+        self._max_attempts = max_attempts
+
+    async def run(self) -> SessionState:
+        async with SessionStore(self._path) as store:
+            state = await self._load_state(store)
+            for _attempt in range(self._max_attempts):
+                outcome = await self._attempt(state, store)
+                if outcome == "restart":
+                    continue
+                if outcome == "paired":
+                    state.paired = True
+                    continue
+                return state
+                # pragma: no cover - loop always returns or continues
+            raise SessionError(f"gave up after {self._max_attempts} attempts")
+
+    async def _load_state(self, store: SessionStore) -> SessionState:
+        raw = await store.load_creds()
+        if raw is None:
+            credentials = generate_credentials()
+            await store.save_creds(credentials.to_dict())
+            return SessionState(credentials=credentials)
+        me = raw.get("me") if isinstance(raw, dict) else None
+        credentials = DeviceCredentials.from_dict(raw)
+        jid = me.get("id") if isinstance(me, dict) else None
+        lid = me.get("lid") if isinstance(me, dict) else None
+        return SessionState(credentials=credentials, paired=jid is not None, jid=jid, lid=lid)
+
+    def _payload(self, state: SessionState) -> bytes:
+        if state.paired and state.jid:
+            return build_login_payload(state.jid, version=self._version)
+        return build_registration_payload(state.credentials, version=self._version)
+
+    async def _attempt(self, state: SessionState, store: SessionStore) -> str:
+        transport = self._factory()
+        await transport.connect()
+        try:
+            await transport.handshake(client_payload=self._payload(state))
+            return await self._serve(transport, state, store)
+        finally:
+            await transport.close()
+
+    async def _serve(self, transport: Transport, state: SessionState, store: SessionStore) -> str:
+        source = None
+        next_rotation = 0.0
+        while True:
+            timeout = None
+            if source is not None:
+                timeout = max(0.0, next_rotation - time.monotonic())
+            try:
+                frame = await asyncio.wait_for(transport.recv_encrypted(), timeout=timeout)
+            except TimeoutError:
+                # wait_for raised: it is time to rotate the QR.
+                item = source.next() if source is not None else None
+                if item is None:
+                    return "timeout"
+                await self._emit_qr(item)
+                next_rotation = time.monotonic() + item.ttl
+                continue
+            except (ConnectionError, OSError):
+                return "closed"
+
+            node = decode_node(frame)
+            error = parse_stream_error(node)
+            if error is not None:
+                if error.code in STREAM_ERROR_LOGGED_OUT:
+                    raise SessionError(f"session rejected: {error.code} {error.text}")
+                if error.code == STREAM_ERROR_RESTART:
+                    return "restart"
+                return "close"
+
+            pair_device = child(node, "pair-device")
+            if pair_device is not None:
+                await self._ack(transport, node)
+                refs = self._read_refs(pair_device)
+                if refs:
+                    source = PairingQrSource(
+                        state.credentials,
+                        refs,
+                        platform=self._platform,
+                        first_ttl=QR_FIRST_TTL,
+                        next_ttl=QR_NEXT_TTL,
+                    )
+                    item = source.next()
+                    if item is not None:
+                        await self._emit_qr(item)
+                        next_rotation = time.monotonic() + item.ttl
+                continue
+
+            if child(node, "pair-success") is not None:
+                await self._complete_pairing(transport, node, state, store)
+                return "paired"
+
+            if node.tag == "success":
+                return "connected"
+            if node.tag == "failure":
+                raise SessionError(f"connection refused: {node.attrs}")
+
+    async def _ack(self, transport: Transport, node: Node) -> None:
+        await transport.send_encrypted(
+            encode_node(
+                Node(
+                    tag="iq",
+                    attrs={"to": S_WHATSAPP_NET, "type": "result", "id": node.attrs.get("id", "")},
+                )
+            )
+        )
+
+    @staticmethod
+    def _read_refs(pair_device: Node) -> list[str]:
+        refs: list[str] = []
+        for ref_node in children(pair_device, "ref"):
+            content = ref_node.content
+            refs.append(content.decode() if isinstance(content, bytes) else str(content))
+        return refs
+
+    async def _emit_qr(self, item: PairingQr) -> None:
+        if self._qr_callback is None:
+            return
+        result = self._qr_callback(item)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def _complete_pairing(
+        self, transport: Transport, node: Node, state: SessionState, store: SessionStore
+    ) -> None:
+        pair: PairSuccess = parse_pair_success(node, message_id=node.attrs.get("id", ""))
+        identity = verify_pair_success(pair, state.credentials)
+        reply = build_pair_device_sign_reply(node.attrs["id"], identity, key_index=0)
+        await transport.send_encrypted(encode_node(reply))
+        state.jid = pair.jid
+        state.lid = pair.lid
+        stored = state.credentials.to_dict()
+        stored["me"] = {"id": pair.jid, "lid": pair.lid}
+        await store.save_creds(stored)
