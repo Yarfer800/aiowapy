@@ -94,3 +94,13 @@ def test_push_name_is_included_when_given() -> None:
     without = build_registration_payload(credentials(), version=(2, 3000, 1))
     assert first_bytes(parse_fields(with_name), 7) == b"bot"
     assert len(with_name) > len(without)
+
+
+def test_login_payload_matches_reference_byte_for_byte() -> None:
+    """Field order matters to WhatsApp: this fixture pins the reference layout."""
+    fixture = (
+        Path(__file__).resolve().parents[1] / "fixtures" / "protocol" / "client_payload_login.hex"
+    )
+    expected = bytes.fromhex(fixture.read_text().strip())
+    actual = build_login_payload("79646669102:7@s.whatsapp.net", version=(2, 3000, 1043857760))
+    assert actual == expected
