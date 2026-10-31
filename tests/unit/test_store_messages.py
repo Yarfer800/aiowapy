@@ -146,3 +146,15 @@ async def test_peer_survives_reopening(tmp_path: Path) -> None:
         assert messages[0]["text"] == "hi"
     finally:
         await second.close()
+
+
+async def test_lid_mappings(store: SessionStore) -> None:
+    await store.put_lid_mapping(CHAT, "11111@lid")
+    assert await store.get_lid(CHAT) == "11111@lid"
+    assert await store.get_pn("11111@lid") == CHAT
+    assert await store.list_lid_mappings() == {CHAT: "11111@lid"}
+
+    await store.put_lid_mapping(CHAT, "22222@lid")
+    assert await store.get_lid(CHAT) == "22222@lid"
+    assert await store.get_pn("11111@lid") is None
+    assert await store.get_lid("99999@s.whatsapp.net") is None

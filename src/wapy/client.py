@@ -711,6 +711,13 @@ class WhatsAppClient:
         rows = await self._require_store().list_peers(KIND_GROUP)
         return [self._peer(row) for row in rows[:limit]]
 
+    async def lid_for(self, jid: str) -> str | None:
+        """The LID address of a phone-number JID, when the phone shared it."""
+        return await self._require_store().get_lid(jid)
+
+    async def pn_for(self, lid_jid: str) -> str | None:
+        return await self._require_store().get_pn(lid_jid)
+
     async def get_chat(self, jid: str) -> Peer | None:
         row = await self._require_store().get_peer(jid)
         return None if row is None else self._peer(row)

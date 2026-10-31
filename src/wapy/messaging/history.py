@@ -68,6 +68,8 @@ class HistorySyncService:
         await self._store_chats(history)
         for jid, name in history.push_names.items():
             await self._store.upsert_peer(jid, _kind(jid), push_name=name)
+        for pn_jid, lid_jid in history.lid_mappings.items():
+            await self._store.put_lid_mapping(pn_jid, lid_jid)
 
         if self._on_chunk is not None:
             self._on_chunk(history)

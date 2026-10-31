@@ -15,7 +15,7 @@ import aiosqlite
 
 from wapy.errors import StoreError, StoreNotOpenError
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 _PRAGMAS = (
@@ -316,6 +316,40 @@ class SessionStore:
                 "fetched = excluded.fetched",
                 (jid, record, fetched),
             )
+
+    async def put_lid_mapping(self, pn_jid: str, lid_jid: str) -> None:
+        """Phone-number JID -> LID JID, as shared by the phone."""
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO lid_mappings (pn_jid, lid_jid) VALUES (?, ?) "
+                "ON CONFLICT(pn_jid) DO UPDATE SET lid_jid = excluded.lid_jid",
+                (pn_jid, lid_jid),
+            )
+
+    async def get_lid(self, pn_jid: str) -> str | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT lid_jid FROM lid_mappings WHERE pn_jid = ?", (pn_jid,)
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else str(row["lid_jid"])
+
+    async def get_pn(self, lid_jid: str) -> str | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT pn_jid FROM lid_mappings WHERE lid_jid = ?", (lid_jid,)
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else str(row["pn_jid"])
+
+    async def list_lid_mappings(self) -> dict[str, str]:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT pn_jid, lid_jid FROM lid_mappings")
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return {str(row["pn_jid"]): str(row["lid_jid"]) for row in rows}
 
     # -- peers: users and groups we have seen ---------------------------------
 

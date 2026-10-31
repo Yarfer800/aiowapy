@@ -147,6 +147,8 @@ async def test_service_stores_messages_and_peers(tmp_path) -> None:
         team = await store.get_peer(GROUP)
         assert team is not None and team["subject"] == "Team" and team["kind"] == "group"
 
+        assert await store.get_lid(CHAT) == "11111@lid"
+
         messages = await store.get_messages(CHAT)
         assert [row["message_id"] for row in messages] == ["H2", "H1"]
         assert messages[1]["text"] == "first"

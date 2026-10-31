@@ -21,95 +21,98 @@ from wapy.client import WhatsAppClient
 from wapy.events import MessageEvent
 from wapy.router import F
 
-
 async def main() -> None:
     async with WhatsAppClient("bot.session") as client:
         print("connected as", client.info.jid)
 
         @client.router.message(F.text.startswith("/ping"))
         async def ping(event: MessageEvent) -> None:
-            await client.send_text(event.chat_jid, "pong")
+            await client.send_text(event.chat_jid, "pong", quote=event.message_id)
 
         await client.run()
-
 
 asyncio.run(main())
 ```
 
-The first run prints nothing to send a message with: link the device by scanning the
-QR code (`qr_callback`) or, for a phone number, use `ClientSession.pair_with_phone_number`
-(see `examples/pair_code.py`). The session file keeps the keys, so later runs just log in.
+The first run needs linking: scan the QR code (`qr_callback`) or use
+`ClientSession.pair_with_phone_number` (see `examples/pair_code.py`). After that the
+session file keeps the keys and later runs only log in.
 
-## What is covered
+## One session file, like Pyrogram
 
-| Layer | Module | Status |
-|---|---|---|
-| Noise handshake, framing | `wapy.protocol.noise`, `wapy.protocol.transport` | yes |
-| Pairing (QR and code) | `wapy.protocol.pairing`, `wapy.protocol.pairing_code` | yes |
-| WABinary codec | `wapy.protocol.wabinary` | yes |
-| Signal (X3DH, double ratchet) | `wapy.crypto.session` | yes |
-| Sending (text, media, groups) | `wapy.messaging` | yes |
-| Receiving and decryption | `wapy.messaging.receiving` | yes |
-| Receipts, retry requests | `wapy.protocol.receipts`, `wapy.client` | yes |
-| Presence and typing | `wapy.protocol.presence` | yes |
-| Groups (sender keys) | `wapy.messaging.groups` | yes |
-| Media upload and download | `wapy.messaging.media` | yes |
-| App state sync | `wapy.messaging.appstate` | yes |
-| History sync, newsletters | — | not yet |
+`.session` is SQLite and holds everything: credentials, Signal sessions, prekeys,
+app state, **chats, contacts and messages**.
+
+```python
+history = await client.get_chat_history(chat_jid, limit=50)   # newest first
+older   = await client.get_chat_history(chat_jid, limit=50,
+                                        before_timestamp=history[-1].timestamp)
+
+chats  = await client.get_chats()        # conversations, newest first
+users  = await client.get_users()        # contacts we have seen
+chat   = await client.get_chat(jid)      # Peer: .name, .push_name, .contact_name
+await client.set_contact_name(jid, "Mom")
+await client.download_stored(history[0]) # attachment of a stored message
+```
+
+Messages arrive from three places: live traffic, `history sync` chunks sent by the
+phone, and everything the bot sends. All of it lands in the same table, so
+`get_chat_history` returns a real conversation, not just what the process saw.
 
 ## Sending
 
 ```python
-await client.send_text("491234567890@s.whatsapp.net", "hello")
-await client.send_image(chat, picture_bytes, caption="look")
-await client.send_document(chat, pdf_bytes, file_name="report.pdf", mime_type="application/pdf")
-await client.send_audio(chat, voice_bytes, voice_note=True)
-await client.send_text("120363000000000001@g.us", "hello group")  # groups just work
+await client.send_text(jid, "hello")
+await client.send_text(jid, "with a reply", quote=message_id)
+await client.send_image(jid, picture_bytes, caption="look")
+await client.send_document(jid, pdf_bytes, file_name="report.pdf", mime_type="application/pdf")
+await client.send_audio(jid, voice_bytes, voice_note=True)
+await client.send_reaction(jid, message_id, "\U0001f44d")
+await client.edit_message(jid, message_id, "fixed text")
+await client.revoke_message(jid, message_id)
+await client.send_text("120363000000000001@g.us", "hello group")   # groups just work
 ```
 
-`send_*` returns `SendResult(message_id, sent, failed, acked)`: a message is delivered
-when at least one device accepted it, and failures of individual devices are listed
-rather than raised.
+`send_*` returns `SendResult(message_id, sent, failed, acked)`: a message counts as
+delivered when at least one device accepted it; per-device failures are listed, not
+raised.
 
 ## Receiving
-
-Handlers are registered on `client.router` with optional filters:
 
 ```python
 from wapy.router import F
 
-
 @client.router.message(F.text.contains("invoice") & F.chat("1203630@g.us"))
 async def handle(event: MessageEvent) -> None:
     await client.mark_read(event)
-
 
 @client.router.message(F.media("image"))
 async def on_image(event: MessageEvent) -> None:
     data = await client.download_media(event.media)
 ```
 
-Available events: `MessageEvent`, `ReceiptEvent`, `PresenceEvent`, `ChatStateEvent`,
-`ConnectedEvent`, `DisconnectedEvent`, `NotificationEvent`.
+Events: `MessageEvent`, `ReactionEvent`, `EditEvent`, `RevokeEvent`, `HistorySyncEvent`,
+`ReceiptEvent`, `PresenceEvent`, `ChatStateEvent`, `ConnectedEvent`,
+`DisconnectedEvent`, `NotificationEvent`.
 
 Presence and typing:
 
 ```python
-await client.send_presence(True)  # available, with the push name
-await client.subscribe_presence(jid)  # receive this user's updates
+await client.send_presence(True)
+await client.subscribe_presence(jid)
 await client.send_typing(jid, composing=True)
 ```
 
 ## Groups
 
 ```python
-info = await client.group_info(group_jid)  # subject, participants, settings
+info  = await client.group_info(group_jid)
 group = await client.create_group("Team", [jid1, jid2])
 await client.update_group_participants(group, "add", [jid3])
 await client.leave_group(group)
 ```
 
-Group messages are encrypted once with a sender key and the key distribution message
+A group message is encrypted once with a sender key; the key distribution message
 travels to every member device, exactly as the reference client does it.
 
 ## App state
@@ -118,11 +121,34 @@ Contacts, mutes, pins and read markers live in WhatsApp's app state. Keys arrive
 the phone; after that:
 
 ```python
-await client.sync_app_state()  # pull and verify patches
+await client.sync_app_state()
 await client.mute_chat(jid, True)
 await client.pin_chat(jid, True)
 await client.mark_chat_read(jid, True)
 ```
+
+## Coverage
+
+| Layer | Module |
+|---|---|
+| Noise handshake, framing | `wapy.protocol.noise`, `wapy.protocol.transport` |
+| Pairing (QR and code) | `wapy.protocol.pairing`, `wapy.protocol.pairing_code` |
+| WABinary codec | `wapy.protocol.wabinary` |
+| Signal (X3DH, double ratchet) | `wapy.crypto.session` |
+| Sending: text, media, groups | `wapy.messaging` |
+| Receiving and decryption | `wapy.messaging.receiving` |
+| Receipts, retry requests | `wapy.protocol.receipts`, `wapy.client` |
+| Presence and typing | `wapy.protocol.presence` |
+| Groups (sender keys) | `wapy.messaging.groups` |
+| Media upload and download | `wapy.messaging.media` |
+| App state sync | `wapy.messaging.appstate` |
+| History sync | `wapy.messaging.history` |
+| Chats, contacts, messages | `wapy.store` |
+| Reactions, replies, edits, revokes | `wapy.protocol.messages` |
+
+Not implemented: calls, channels (newsletters), statuses, polls and buttons,
+LID-based encryption (LID mappings are stored and exposed, but sessions still start
+on phone-number devices).
 
 ## License
 
