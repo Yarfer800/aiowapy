@@ -158,12 +158,34 @@ async def test_pairing_then_restart_then_login(session_path: Path) -> None:
     assert stored is not None and stored["me"]["id"] == state.jid
 
 
-async def test_logged_out_session_raises(session_path: Path) -> None:
+async def test_logged_out_session_falls_back_to_pairing(session_path: Path) -> None:
     credentials = generate_credentials()
     async with SessionStore(session_path) as store:
         await store.save_creds({**credentials.to_dict(), "me": {"id": "1:2@s.whatsapp.net"}})
 
-    ScriptedTransport.scripts = [[stream_error_node(401, "logged out")]]
+    ScriptedTransport.scripts = [
+        [stream_error_node(401, "logged out")],
+        [pair_device_node(["2@a"]), stream_error_node(515)],
+    ]
+    ScriptedTransport.handshakes = []
+    shown = []
+    session = ClientSession(
+        session_path, transport_factory=ScriptedTransport, qr_callback=shown.append
+    )
+    await asyncio.wait_for(session.run(), timeout=20)
+
+    # first attempt used the login payload, the retry went back to registration
+    assert 1 in parse_fields(ScriptedTransport.handshakes[0])
+    assert 19 in parse_fields(ScriptedTransport.handshakes[1])
+    assert shown  # a QR was offered again
+
+    async with SessionStore(session_path) as store:
+        stored = await store.load_creds()
+    assert stored is not None and "me" not in stored
+
+
+async def test_unpaired_401_is_terminal(session_path: Path) -> None:
+    ScriptedTransport.scripts = [[stream_error_node(401, "no account")]]
     ScriptedTransport.handshakes = []
     session = ClientSession(session_path, transport_factory=ScriptedTransport)
     with pytest.raises(SessionError):

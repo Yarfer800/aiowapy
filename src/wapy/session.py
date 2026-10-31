@@ -186,6 +186,9 @@ class ClientSession:
             error = parse_stream_error(node)
             if error is not None:
                 if error.code in STREAM_ERROR_LOGGED_OUT:
+                    if state.paired:
+                        await self._forget_me(store, state)
+                        return "restart"
                     raise SessionError(f"session rejected: {error.code} {error.text}")
                 if error.code == STREAM_ERROR_RESTART:
                     return "restart"
@@ -217,6 +220,7 @@ class ClientSession:
                 continue
 
             if node.tag == "success":
+                await self._store_me(store, state)
                 await self._ensure_prekeys(transport, state, store)
                 return "connected"
             if node.tag == "failure":
@@ -266,6 +270,17 @@ class ClientSession:
             if response.tag == "iq" and response.attrs.get("id") == message_id:
                 return response
 
+    async def _store_me(self, store: SessionStore, state: SessionState) -> None:
+        if not state.jid:
+            return
+        stored = state.credentials.to_dict()
+        stored["me"] = {"id": state.jid, "lid": state.lid}
+        await store.save_creds(stored)
+
+    async def _forget_me(self, store: SessionStore, state: SessionState) -> None:
+        state.paired = False
+        await store.save_creds(state.credentials.to_dict())
+
     async def _ack(self, transport: Transport, node: Node) -> None:
         await transport.send_encrypted(
             encode_node(
@@ -301,6 +316,5 @@ class ClientSession:
         state.jid = pair.jid
         state.lid = pair.lid
         state.paired = True
-        stored = state.credentials.to_dict()
-        stored["me"] = {"id": pair.jid, "lid": pair.lid}
-        await store.save_creds(stored)
+        # `me` is written only after the server accepts the login: saving it here
+        # would make every later run try to log in even if registration failed.
