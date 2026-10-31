@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from wapy.creds import DeviceCredentials, generate_credentials
 from wapy.crypto.primitives import generate_keypair
@@ -32,7 +34,20 @@ from wapy.messaging.real import (
     StreamNodeSender,
     UsyncDeviceFetcher,
 )
-from wapy.messaging.receiving import DecryptError, MessageReceiver, ReceiveError
+from wapy.messaging.receiving import (
+    DecryptError,
+    MessageReceiver,
+    ReceivedMessage,
+    ReceiveError,
+)
+from wapy.models import (
+    KIND_GROUP,
+    KIND_USER,
+    Peer,
+    StoredMessage,
+    media_from_dict,
+    media_to_dict,
+)
 from wapy.protocol.groups import GroupInfo, GroupParticipant
 from wapy.protocol.media import (
     MEDIA_AUDIO,
@@ -322,6 +337,7 @@ class WhatsAppClient:
             StoreSignalSessionsWithDecrypt(self._store, state.credentials),
             self._sender_keys,
             self._groups,
+            device_identity=state.credentials.device_identity,
             ack_timeout=self._ack_timeout,
         )
         self._receiver = MessageReceiver(
@@ -352,6 +368,8 @@ class WhatsAppClient:
             StreamNodeSender(stream),
             self._build_resolver(stream, state),
             StoreSignalSessionsWithDecrypt(self._store, state.credentials),
+            own_jid=state.jid,
+            device_identity=state.credentials.device_identity,
             ack_timeout=self._ack_timeout,
         )
 
@@ -559,12 +577,132 @@ class WhatsAppClient:
     async def set_push_name(self, name: str) -> int:
         return await self._require_app_state().set_push_name(name)
 
+    # ------------------------------------------------------------------ storage
+
+    async def get_chat_history(
+        self, chat_jid: str, limit: int = 100, *, before_timestamp: int | None = None
+    ) -> list[StoredMessage]:
+        """Messages of one chat from the session file, newest first."""
+        rows = await self._require_store().get_messages(
+            chat_jid, limit=limit, before_timestamp=before_timestamp
+        )
+        return [self._stored_message(row) for row in rows]
+
+    async def get_message(self, chat_jid: str, message_id: str) -> StoredMessage | None:
+        row = await self._require_store().get_message(chat_jid, message_id)
+        return None if row is None else self._stored_message(row)
+
+    async def get_chats(self, limit: int = 100) -> list[Peer]:
+        rows = await self._require_store().list_chats(limit=limit)
+        return [self._peer(row) for row in rows]
+
+    async def get_users(self, limit: int = 1000) -> list[Peer]:
+        rows = await self._require_store().list_peers(KIND_USER)
+        return [self._peer(row) for row in rows[:limit]]
+
+    async def get_groups(self, limit: int = 1000) -> list[Peer]:
+        rows = await self._require_store().list_peers(KIND_GROUP)
+        return [self._peer(row) for row in rows[:limit]]
+
+    async def get_chat(self, jid: str) -> Peer | None:
+        row = await self._require_store().get_peer(jid)
+        return None if row is None else self._peer(row)
+
+    async def set_contact_name(self, jid: str, name: str) -> None:
+        """Local address-book name, like a phone contact list entry."""
+        await self._require_store().upsert_peer(
+            jid, KIND_GROUP if jid.endswith("@g.us") else KIND_USER, contact_name=name
+        )
+
+    async def save_contact(self, jid: str, name: str, phone: str | None = None) -> None:
+        await self._require_store().upsert_peer(jid, KIND_USER, contact_name=name, phone=phone)
+
+    async def download_stored(self, message: StoredMessage) -> bytes:
+        """Download the attachment of a message read back from the session file."""
+        if message.media is None:
+            raise ClientError("this message has no attachment")
+        return await self.download_media(message.media)
+
+    async def _record_incoming(self, received: ReceivedMessage) -> None:
+        store = self._require_store()
+        chat_jid = received.chat_jid
+        sender_jid = received.sender_jid
+        push_name = received.push_name
+        is_group = chat_jid.endswith("@g.us")
+        await store.upsert_peer(chat_jid, KIND_GROUP if is_group else KIND_USER)
+        if is_group and sender_jid:
+            await store.upsert_peer(sender_jid, KIND_USER, push_name=push_name)
+        elif push_name:
+            await store.upsert_peer(chat_jid, KIND_USER, push_name=push_name)
+
+        await store.save_message(
+            chat_jid,
+            received.message_id,
+            sender_jid=sender_jid,
+            timestamp=received.timestamp,
+            text=received.text,
+            media_json=(
+                json.dumps(media_to_dict(received.media)) if received.media is not None else None
+            ),
+            outgoing=False,
+        )
+
+    async def _record_outgoing(self, jid: str, message_id: str, payload: bytes) -> None:
+        from wapy.protocol.messages import parse_message
+
+        parsed = parse_message(payload)
+        store = self._require_store()
+        is_group = jid.endswith("@g.us")
+        if not is_group:
+            await store.upsert_peer(jid, KIND_USER)
+        await store.save_message(
+            jid,
+            message_id,
+            sender_jid=self.info.jid if self.info else None,
+            timestamp=int(time.time()),
+            text=parsed.text,
+            media_json=(
+                json.dumps(media_to_dict(parsed.media)) if parsed.media is not None else None
+            ),
+            outgoing=True,
+        )
+
+    @staticmethod
+    def _stored_message(row: dict[str, Any]) -> StoredMessage:
+        raw_media = row.get("media_json")
+        return StoredMessage(
+            chat_jid=str(row["chat_jid"]),
+            message_id=str(row["message_id"]),
+            sender_jid=row.get("sender_jid"),
+            timestamp=row.get("timestamp"),
+            text=row.get("text"),
+            media=media_from_dict(json.loads(raw_media)) if raw_media else None,
+            outgoing=bool(row.get("outgoing")),
+        )
+
+    @staticmethod
+    def _peer(row: dict[str, Any]) -> Peer:
+        return Peer(
+            jid=str(row["jid"]),
+            kind=str(row["kind"]),
+            phone=row.get("phone"),
+            push_name=row.get("push_name"),
+            contact_name=row.get("contact_name"),
+            subject=row.get("subject"),
+            last_update_on=int(row.get("last_update_on") or 0),
+            last_message_at=row.get("last_message_at"),
+            total_messages=row.get("total"),
+        )
+
     # ---------------------------------------------------------------------- groups
 
     async def group_info(self, group_jid: str, *, refresh: bool = False) -> GroupInfo:
         if self._groups is None:
             raise ClientError("the client is not connected")
-        return await self._groups.info(group_jid, refresh=refresh)
+        info = await self._groups.info(group_jid, refresh=refresh)
+        with contextlib.suppress(Exception):
+            await self._require_store().upsert_peer(info.jid, KIND_GROUP, subject=info.subject)
+        return info
 
     async def joined_groups(self) -> list[GroupInfo]:
         if self._groups is None:
@@ -606,9 +744,15 @@ class WhatsAppClient:
         else:
             messenger = self._require_messenger()
             result = await messenger.send_payload(
-                jid, payload, message_type=message_type, wait_for_message=wait_for_message
+                jid,
+                payload,
+                message_type=message_type,
+                media_type=None if message_type == "text" else message_type,
+                wait_for_message=wait_for_message,
             )
         self._remember(result.message_id, jid, payload)
+        with contextlib.suppress(Exception):
+            await self._record_outgoing(jid, result.message_id, payload)
         return result
 
     async def _send_with_outbox(
@@ -616,6 +760,8 @@ class WhatsAppClient:
     ) -> SendResult:
         result = await messenger.send_payload(jid, payload, wait_for_message=wait_for_message)
         self._remember(result.message_id, jid, payload)
+        with contextlib.suppress(Exception):
+            await self._record_outgoing(jid, result.message_id, payload)
         return result
 
     def _remember(self, message_id: str, jid: str, payload: bytes) -> None:
@@ -713,6 +859,8 @@ class WhatsAppClient:
             and received.parsed.sender_key_distribution
         ):
             return
+
+        await self._record_incoming(received)
 
         if self._auto_receipts:
             with contextlib.suppress(Exception):

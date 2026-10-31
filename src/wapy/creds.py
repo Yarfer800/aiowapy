@@ -49,6 +49,8 @@ class DeviceCredentials:
     registration_id: int
     adv_secret_key: str
     pairing_ephemeral_key: KeyPair | None = None
+    device_identity: bytes | None = None
+    """`ADVSignedDeviceIdentity` from pairing; sent with every prekey message."""
 
     @property
     def noise_public(self) -> bytes:
@@ -89,6 +91,7 @@ class DeviceCredentials:
             "pairing_ephemeral_public": _b64(self.pairing_ephemeral_key.public)
             if self.pairing_ephemeral_key
             else None,
+            "device_identity": _b64(self.device_identity) if self.device_identity else None,
         }
 
     @classmethod
@@ -117,6 +120,7 @@ class DeviceCredentials:
                     data.get("pairing_ephemeral_private"),
                     data.get("pairing_ephemeral_public"),
                 ),
+                device_identity=_optional_bytes(data.get("device_identity")),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise CredentialsError(f"malformed credentials: {exc}") from exc
@@ -175,6 +179,17 @@ def _optional_key_pair(private: object, public: object) -> KeyPair | None:
     if private is None or public is None:
         return generate_keypair()
     return KeyPair(private=_unb64(private, 32), public=_unb64(public, 32))
+
+
+def _optional_bytes(value: object) -> bytes | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CredentialsError("expected a base64 string")
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise CredentialsError("device identity is not valid base64") from exc
 
 
 def _b64(value: bytes) -> str:

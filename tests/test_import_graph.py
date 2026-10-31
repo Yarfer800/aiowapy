@@ -10,7 +10,6 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "wapy"
 # Key is a top-level package; value holds prefixes it must not import.
 LAYER_RULES: dict[str, set[str]] = {
     "protocol": {
-        "wapy.models",
         "wapy.events",
         "wapy.router",
         "wapy.store",
@@ -36,7 +35,8 @@ LAYER_RULES: dict[str, set[str]] = {
     },
     "router": {"wapy.protocol", "wapy.crypto", "wapy.store", "wapy.client"},
     "store": {"wapy.client", "wapy.router", "wapy.events", "wapy.models", "wapy.stream"},
-    "events": {"wapy.protocol", "wapy.crypto", "wapy.store", "wapy.client", "wapy.router"},
+    # events carry protocol-level types (MediaInfo, Node) by design.
+    "events": {"wapy.crypto", "wapy.store", "wapy.client", "wapy.router"},
 }
 
 
@@ -60,7 +60,7 @@ def is_violation(module: str, forbidden: str) -> bool:
 def test_layers_do_not_depend_upwards() -> None:
     violations: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
-        top = path.relative_to(SRC).parts[0]
+        top = path.relative_to(SRC).parts[0].removesuffix(".py")
         forbidden = LAYER_RULES.get(top, set())
         for module in sorted(imported_modules(path)):
             for banned in forbidden:

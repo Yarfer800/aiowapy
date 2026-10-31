@@ -148,6 +148,8 @@ class FakeServer:
         )
 
     def _device_list(self, node: Node) -> Node:
+        usync = node.content[0]  # type: ignore[index]
+        user = usync.content[1].content[0].attrs["jid"]  # type: ignore[index,union-attr]
         return Node(
             tag="iq",
             attrs={"type": "result", "id": node.attrs.get("id", "")},
@@ -162,7 +164,7 @@ class FakeServer:
                             content=[
                                 Node(
                                     tag="user",
-                                    attrs={"jid": PEER},
+                                    attrs={"jid": user},
                                     content=[
                                         Node(
                                             tag="devices",
@@ -305,6 +307,95 @@ async def test_connect_announces_presence(tmp_path: Path) -> None:
         await client.close()
 
 
+async def test_incoming_message_is_stored(tmp_path: Path) -> None:
+    client, server, credentials = await connected_client(tmp_path)
+    received: asyncio.Queue[MessageEvent] = asyncio.Queue()
+    try:
+        client.router.message()(received.put_nowait)
+        node = incoming_text(
+            credentials.account,
+            "stored hello",
+            peer_identity=credentials.peer_identity,
+            one_time=credentials.one_time,
+            one_time_id=5,
+        )
+        node.attrs["notify"] = "Alice"
+        server.push(node)
+        await asyncio.wait_for(received.get(), timeout=5)
+
+        history = await client.get_chat_history(PEER)
+        assert [message.text for message in history] == ["stored hello"]
+        assert history[0].sender_jid == PEER
+        assert history[0].timestamp == 1_700_000_000
+        assert history[0].outgoing is False
+
+        chat = await client.get_chat(PEER)
+        assert chat is not None
+        assert chat.push_name == "Alice"
+        assert chat.name == "Alice"
+    finally:
+        await client.close()
+
+
+async def test_sent_message_is_stored(tmp_path: Path) -> None:
+    client, _server, _credentials = await connected_client(tmp_path)
+    try:
+        result = await client.send_text(PEER, "ping")
+        history = await client.get_chat_history(PEER)
+        assert len(history) == 1
+        message = history[0]
+        assert message.message_id == result.message_id
+        assert message.text == "ping"
+        assert message.outgoing is True
+        assert message.sender_jid == ME
+
+        chats = await client.get_chats()
+        assert chats and chats[0].jid == PEER
+        assert chats[0].total_messages == 1
+    finally:
+        await client.close()
+
+
+async def test_contact_names_and_user_listing(tmp_path: Path) -> None:
+    client, server, credentials = await connected_client(tmp_path)
+    received: asyncio.Queue[MessageEvent] = asyncio.Queue()
+    try:
+        client.router.message()(received.put_nowait)
+        server.push(
+            incoming_text(
+                credentials.account,
+                "привет",
+                peer_identity=credentials.peer_identity,
+                one_time=credentials.one_time,
+                one_time_id=5,
+            )
+        )
+        await asyncio.wait_for(received.get(), timeout=5)
+
+        await client.set_contact_name(PEER, "Мама")
+        chat = await client.get_chat(PEER)
+        assert chat is not None and chat.name == "Мама"
+
+        users = await client.get_users()
+        assert any(user.jid == PEER for user in users)
+        assert await client.get_groups() == []
+    finally:
+        await client.close()
+
+
+async def test_history_paging(tmp_path: Path) -> None:
+    client, _server, _credentials = await connected_client(tmp_path)
+    try:
+        for index in range(5):
+            await client._record_outgoing(PEER, f"M{index}", encode_text(f"t{index}"))
+        page = await client.get_chat_history(PEER, limit=2)
+        assert [message.message_id for message in page] == ["M4", "M3"]
+        older = await client.get_chat_history(PEER, limit=2, before_timestamp=page[-1].timestamp)
+        assert all(message.message_id not in {"M4", "M3"} for message in older)
+    finally:
+        await client.close()
+
+
 async def test_incoming_text_reaches_the_router(tmp_path: Path) -> None:
     client, server, credentials = await connected_client(tmp_path)
     received: asyncio.Queue[MessageEvent] = asyncio.Queue()
@@ -371,9 +462,12 @@ async def test_send_text_encrypts_for_every_device(tmp_path: Path) -> None:
         assert result.acked is True
         messages = server.nodes("message")
         assert messages and messages[0].attrs["to"] == PEER
-        enc = messages[0].content[0]  # type: ignore[index]
+        participants = messages[0].content[0]  # type: ignore[index]
+        assert participants.tag == "participants"
+        enc = participants.content[0]  # type: ignore[index,union-attr]
         assert enc.attrs["type"] == "pkmsg"
         assert enc.attrs["jid"] == PEER_DEVICE
+        assert messages[0].attrs["phash"].startswith("2:")
     finally:
         await client.close()
 
@@ -506,8 +600,8 @@ async def test_send_text_to_a_group_uses_sender_keys(tmp_path: Path) -> None:
         node = server.nodes("message")[-1]
         assert node.attrs["to"] == GROUP
         assert node.attrs["phash"].startswith("2:")
-        kinds = [item.attrs["type"] for item in node.content]  # type: ignore[union-attr]
-        assert "skmsg" in kinds
+        kinds = [item.attrs["type"] for item in node.content if item.tag == "enc"]
+        assert kinds == ["skmsg"]
     finally:
         await client.close()
 

@@ -24,7 +24,13 @@ from typing import Protocol
 from wapy.errors import WapyError
 from wapy.messaging.devices import DeviceInfo, DeviceResolver
 from wapy.messaging.signals import SignalSessions
-from wapy.protocol.messages import EncryptedDevice, build_message_node, encode_text
+from wapy.protocol.groups import participant_hash
+from wapy.protocol.messages import (
+    EncryptedDevice,
+    build_message_node,
+    encode_device_sent,
+    encode_text,
+)
 from wapy.protocol.wabinary import Node
 
 DEFAULT_ACK_TIMEOUT = 5.0
@@ -63,12 +69,16 @@ class Messenger:
         devices: DeviceResolver,
         sessions: SignalSessions,
         *,
+        own_jid: str | None = None,
+        device_identity: bytes | None = None,
         ack_timeout: float = DEFAULT_ACK_TIMEOUT,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._sender = sender
         self._devices = devices
         self._sessions = sessions
+        self._own_jid = own_jid
+        self._device_identity = device_identity
         self._ack_timeout = ack_timeout
         self._new_id = id_factory or _default_message_id
 
@@ -81,6 +91,7 @@ class Messenger:
         payload: bytes,
         *,
         message_type: str = "text",
+        media_type: str | None = None,
         wait_for_message: bool = True,
     ) -> SendResult:
         devices = await self._devices.devices(jid)
@@ -88,17 +99,48 @@ class Messenger:
             raise MessagingError(f"no devices known for {jid}")
 
         encrypted, sent, failed = await self._encrypt_for(devices, payload)
+
+        # Our own other devices need their own copy, wrapped in a DeviceSentMessage:
+        # without it the phone never sees what the bot sent from this device.
+        own_devices = await self._own_devices(jid)
+        if own_devices:
+            wrapped = encode_device_sent(jid, payload)
+            own_encrypted, own_sent, own_failed = await self._encrypt_for(own_devices, wrapped)
+            encrypted += own_encrypted
+            sent += own_sent
+            failed += own_failed
+
         if not encrypted:
             raise MessagingError(f"could not encrypt for any device of {jid}: {failed}")
 
         message_id = self._new_id()
-        node = build_message_node(jid, message_id, encrypted, message_type=message_type)
+        node = build_message_node(
+            jid,
+            message_id,
+            encrypted,
+            message_type=message_type,
+            media_type=media_type,
+            device_identity=(
+                self._device_identity if any(item.prekey for item in encrypted) else None
+            ),
+        )
+        node.attrs["phash"] = participant_hash(sent)
         await self._sender.send(node)
 
         acked: bool | None = None
         if wait_for_message:
             acked = await self._sender.wait_for_ack(message_id, timeout=self._ack_timeout)
         return SendResult(message_id=message_id, sent=sent, failed=failed, acked=acked)
+
+    async def _own_devices(self, jid: str) -> list[DeviceInfo]:
+        if not self._own_jid or self._own_jid == jid:
+            return []
+        bare = self._own_jid.split(":", 1)[0] + "@" + self._own_jid.split("@", 1)[1]
+        try:
+            devices = await self._devices.devices(bare)
+        except Exception:
+            return []
+        return [device for device in devices if device.jid != self._own_jid]
 
     def invalidate(self, jid: str) -> None:
         """Forget the cached device list of a recipient."""

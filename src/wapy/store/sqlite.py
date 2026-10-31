@@ -15,7 +15,7 @@ import aiosqlite
 
 from wapy.errors import StoreError, StoreNotOpenError
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 _PRAGMAS = (
@@ -316,6 +316,128 @@ class SessionStore:
                 "fetched = excluded.fetched",
                 (jid, record, fetched),
             )
+
+    # -- peers: users and groups we have seen ---------------------------------
+
+    async def upsert_peer(
+        self,
+        jid: str,
+        kind: str,
+        *,
+        phone: str | None = None,
+        push_name: str | None = None,
+        contact_name: str | None = None,
+        subject: str | None = None,
+    ) -> None:
+        """Insert or refine a peer; existing values are never wiped by a None."""
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO peers (jid, kind, phone, push_name, contact_name, subject) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(jid) DO UPDATE SET "
+                "kind = excluded.kind, "
+                "phone = COALESCE(excluded.phone, peers.phone), "
+                "push_name = COALESCE(excluded.push_name, peers.push_name), "
+                "contact_name = COALESCE(excluded.contact_name, peers.contact_name), "
+                "subject = COALESCE(excluded.subject, peers.subject), "
+                "last_update_on = CAST(STRFTIME('%s', 'now') AS INTEGER)",
+                (jid, kind, phone, push_name, contact_name, subject),
+            )
+
+    async def get_peer(self, jid: str) -> dict[str, Any] | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute("SELECT * FROM peers WHERE jid = ?", (jid,))
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else dict(row)
+
+    async def list_peers(self, kind: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM peers"
+        params: tuple[object, ...] = ()
+        if kind is not None:
+            query += " WHERE kind = ?"
+            params = (kind,)
+        query += " ORDER BY last_update_on DESC, jid"
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [dict(row) for row in rows]
+
+    async def delete_peer(self, jid: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute("DELETE FROM peers WHERE jid = ?", (jid,))
+
+    # -- messages ------------------------------------------------------------
+
+    async def save_message(
+        self,
+        chat_jid: str,
+        message_id: str,
+        *,
+        sender_jid: str | None = None,
+        timestamp: int | None = None,
+        text: str | None = None,
+        media_json: str | None = None,
+        outgoing: bool = False,
+    ) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute(
+                "INSERT INTO messages "
+                "(chat_jid, message_id, sender_jid, timestamp, text, media_json, outgoing) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(chat_jid, message_id) DO UPDATE SET "
+                "sender_jid = COALESCE(excluded.sender_jid, messages.sender_jid), "
+                "timestamp = COALESCE(excluded.timestamp, messages.timestamp), "
+                "text = COALESCE(excluded.text, messages.text), "
+                "media_json = COALESCE(excluded.media_json, messages.media_json), "
+                "outgoing = excluded.outgoing",
+                (chat_jid, message_id, sender_jid, timestamp, text, media_json, int(outgoing)),
+            )
+
+    async def get_message(self, chat_jid: str, message_id: str) -> dict[str, Any] | None:
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM messages WHERE chat_jid = ? AND message_id = ?",
+                (chat_jid, message_id),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return None if row is None else dict(row)
+
+    async def get_messages(
+        self, chat_jid: str, *, limit: int = 100, before_timestamp: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Newest first; `before_timestamp` walks towards older messages."""
+        query = "SELECT * FROM messages WHERE chat_jid = ?"
+        params: list[object] = [chat_jid]
+        if before_timestamp is not None:
+            query += " AND timestamp < ?"
+            params.append(before_timestamp)
+        query += " ORDER BY timestamp DESC, message_id DESC LIMIT ?"
+        params.append(limit)
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(query, tuple(params))
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [dict(row) for row in rows]
+
+    async def list_chats(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Peers that have messages, newest conversation first."""
+        async with self._tx(write=False) as conn:
+            cursor = await conn.execute(
+                "SELECT p.*, MAX(m.timestamp) AS last_message_at, COUNT(m.message_id) AS total "
+                "FROM peers p LEFT JOIN messages m ON m.chat_jid = p.jid "
+                "GROUP BY p.jid ORDER BY last_message_at DESC NULLS LAST, p.jid LIMIT ?",
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [dict(row) for row in rows]
+
+    async def delete_messages(self, chat_jid: str) -> None:
+        async with self._tx(write=True) as conn:
+            await conn.execute("DELETE FROM messages WHERE chat_jid = ?", (chat_jid,))
 
     async def delete_group(self, jid: str) -> None:
         async with self._tx(write=True) as conn:

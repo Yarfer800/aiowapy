@@ -1,20 +1,41 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 
 from wapy.errors import WapyError
+from wapy.models import (
+    MEDIA_AUDIO,
+    MEDIA_DOCUMENT,
+    MEDIA_IMAGE,
+    MEDIA_PTT,
+    MEDIA_STICKER,
+    MEDIA_VIDEO,
+    MediaConnection,
+    MediaInfo,
+)
 from wapy.protocol.stream import child, children
 from wapy.protocol.wabinary import Node
 
 S_WHATSAPP_NET = "@s.whatsapp.net"
 
-MEDIA_IMAGE = "image"
-MEDIA_VIDEO = "video"
-MEDIA_AUDIO = "audio"
-MEDIA_PTT = "ptt"
-MEDIA_DOCUMENT = "document"
-MEDIA_STICKER = "sticker"
+__all__ = [
+    "MEDIA_AUDIO",
+    "MEDIA_DOCUMENT",
+    "MEDIA_IMAGE",
+    "MEDIA_PTT",
+    "MEDIA_STICKER",
+    "MEDIA_VIDEO",
+    "MMS_TYPES",
+    "MESSAGE_FIELDS",
+    "MediaConnection",
+    "MediaError",
+    "MediaInfo",
+    "build_media_conn_query",
+    "download_url",
+    "parse_media_conn",
+    "upload_path",
+    "upload_url",
+]
 
 # The `mms-type` used in upload and download paths.
 MMS_TYPES: dict[str, str] = {
@@ -39,38 +60,6 @@ MESSAGE_FIELDS: dict[str, int] = {
 
 class MediaError(WapyError):
     """Media metadata is incomplete or a media host answered with an error."""
-
-
-@dataclass(frozen=True, slots=True)
-class MediaInfo:
-    media_type: str
-    mime_type: str
-    url: str
-    direct_path: str
-    media_key: bytes
-    file_sha256: bytes
-    file_enc_sha256: bytes
-    file_length: int
-    caption: str | None = None
-    file_name: str | None = None
-    seconds: int | None = None
-    width: int | None = None
-    height: int | None = None
-    is_ptt: bool = False
-    media_key_timestamp: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class MediaConnection:
-    auth: str
-    hosts: tuple[str, ...]
-    ttl: int
-
-    @property
-    def upload_host(self) -> str:
-        if not self.hosts:
-            raise MediaError("the server returned no media hosts")
-        return self.hosts[0]
 
 
 def build_media_conn_query(message_id: str) -> Node:

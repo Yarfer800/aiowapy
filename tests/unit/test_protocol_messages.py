@@ -59,8 +59,10 @@ def test_build_message_node_structure() -> None:
     ]
     node = build_message_node("1@s.whatsapp.net", "MSGID", devices)
     assert node.attrs == {"id": "MSGID", "to": "1@s.whatsapp.net", "type": "text"}
-    assert isinstance(node.content, list) and len(node.content) == 2
-    assert [item.attrs["type"] for item in node.content] == ["msg", "pkmsg"]
+    assert isinstance(node.content, list) and len(node.content) == 1
+    participants = node.content[0]
+    assert participants.tag == "participants"
+    assert [item.attrs["type"] for item in participants.content] == ["msg", "pkmsg"]  # type: ignore[union-attr]
 
 
 def test_build_message_node_requires_devices() -> None:
@@ -101,3 +103,59 @@ def test_transport_base64_helpers() -> None:
     assert decode_from_transport(encode_for_transport(payload)) == payload
     with pytest.raises(MessageError):
         decode_from_transport("not base64!!")
+
+
+def test_message_node_carries_device_identity_only_when_asked() -> None:
+    devices = [EncryptedDevice("1:2@s.whatsapp.net", b"x", prekey=True)]
+    node = build_message_node("1@s.whatsapp.net", "id", devices, device_identity=b"identity")
+    assert [item.tag for item in node.content] == ["participants", "device-identity"]  # type: ignore[union-attr]
+
+    plain = build_message_node("1@s.whatsapp.net", "id", devices)
+    assert [item.tag for item in plain.content] == ["participants"]  # type: ignore[union-attr]
+
+
+def test_media_type_lands_on_the_enc_nodes() -> None:
+    devices = [EncryptedDevice("1:2@s.whatsapp.net", b"x")]
+    node = build_message_node("1@s.whatsapp.net", "id", devices, media_type="image")
+    participants = node.content[0]  # type: ignore[index]
+    assert participants.content[0].attrs["mediatype"] == "image"
+
+
+def test_incoming_reads_enc_both_inline_and_in_participants() -> None:
+    from wapy.protocol.messages import parse_incoming
+
+    inline = Node(
+        tag="message",
+        attrs={"id": "1", "from": "2@s.whatsapp.net"},
+        content=[Node(tag="enc", attrs={"type": "msg", "jid": "2:1@s.whatsapp.net"}, content=b"x")],
+    )
+    nested = Node(
+        tag="message",
+        attrs={"id": "2", "from": "2@s.whatsapp.net"},
+        content=[
+            Node(
+                tag="participants",
+                content=[
+                    Node(
+                        tag="enc",
+                        attrs={"type": "msg", "jid": "2:1@s.whatsapp.net"},
+                        content=b"y",
+                    )
+                ],
+            )
+        ],
+    )
+    assert parse_incoming(inline).devices[0].ciphertext == b"x"
+    assert parse_incoming(nested).devices[0].ciphertext == b"y"
+
+
+def test_device_sent_message_wraps_the_payload() -> None:
+    from wapy.pb import parse_fields
+    from wapy.protocol.messages import encode_device_sent
+
+    wrapped = encode_device_sent("1@s.whatsapp.net", b"\x0a\x02hi")
+    outer = parse_fields(wrapped)
+    assert 31 in outer
+    inner = parse_fields(outer[31][0])  # type: ignore[index]
+    assert inner[1][0] == b"1@s.whatsapp.net"
+    assert inner[2][0] == b"\x0a\x02hi"

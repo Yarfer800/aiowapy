@@ -43,6 +43,7 @@ class ReceivedMessage:
     media: MediaInfo | None = None
     timestamp: int | None = None
     parsed: ParsedMessage | None = None
+    push_name: str | None = None
 
 
 class MessageReceiver:
@@ -118,4 +119,5 @@ class MessageReceiver:
             media=parsed.media,
             timestamp=incoming.timestamp,
             parsed=parsed,
+            push_name=incoming.push_name,
         )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 from dataclasses import dataclass, field
 
 from wapy.errors import WapyError
@@ -54,6 +56,12 @@ class GroupInfo:
     @property
     def participant_jids(self) -> list[str]:
         return [participant.jid for participant in self.participants]
+
+
+def participant_hash(device_jids: list[str]) -> str:
+    """`phash`: the server uses it to detect a stale participant list."""
+    digest = hashlib.sha256("".join(sorted(device_jids)).encode("utf-8")).digest()
+    return "2:" + base64.b64encode(digest[:6]).decode("ascii").rstrip("=")
 
 
 def build_group_iq(group_jid: str, iq_type: str, content: list[Node], message_id: str) -> Node:

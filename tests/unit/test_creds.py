@@ -106,4 +106,4 @@ def test_registration_id_range_is_enforced_on_load() -> None:
 def test_serialized_form_contains_no_private_key_as_plaintext_field_names() -> None:
     data = generate_credentials().to_dict()
     assert set(data) >= {"noise_public", "identity_public", "adv_secret_key"}
-    assert all(isinstance(value, (str, int)) for value in data.values())
+    assert all(isinstance(value, (str, int)) or value is None for value in data.values())

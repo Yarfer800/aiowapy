@@ -9,6 +9,7 @@ from wapy.pb import (
     bytes_field,
     first_bytes,
     first_int,
+    message_field,
     parse_fields,
     varint_field,
 )
@@ -144,6 +145,14 @@ def _encode_media_body(info: MediaInfo) -> bytes:
             varint_field(9, info.file_length),
             varint_field(10, info.media_key_timestamp or 0),
         )
+    )
+
+
+def encode_device_sent(destination_jid: str, message: bytes) -> bytes:
+    """The copy our own devices read: `DeviceSentMessage{destination, message}`."""
+    return bytes_field(
+        31,
+        bytes_field(1, destination_jid.encode("utf-8")) + message_field(2, message),
     )
 
 
@@ -327,12 +336,11 @@ class EncryptedDevice:
         return "pkmsg" if self.prekey else "msg"
 
 
-def enc_node(device: EncryptedDevice) -> Node:
-    return Node(
-        tag="enc",
-        attrs={"v": "2", "type": device.enc_type, "jid": device.device_jid},
-        content=device.ciphertext,
-    )
+def enc_node(device: EncryptedDevice, *, media_type: str | None = None) -> Node:
+    attrs = {"v": "2", "type": device.enc_type, "jid": device.device_jid}
+    if media_type:
+        attrs["mediatype"] = media_type
+    return Node(tag="enc", attrs=attrs, content=device.ciphertext)
 
 
 def group_enc_node(ciphertext: bytes, *, media_type: str | None = None) -> Node:
@@ -349,13 +357,29 @@ def build_message_node(
     devices: list[EncryptedDevice],
     *,
     message_type: str = "text",
+    media_type: str | None = None,
+    device_identity: bytes | None = None,
     extra: list[Node] | None = None,
 ) -> Node:
-    content = [enc_node(device) for device in devices]
+    """One `<message>`: per-device payloads inside `<participants>`.
+
+    The participants wrapper is not cosmetic: both reference clients put every
+    `<enc>` there, and a stanza with bare `<enc>` children is not a message the
+    server knows how to route. A sender key payload (`skmsg`) stays at the root.
+    """
+    if not devices:
+        raise MessageError("a message needs at least one encrypted payload")
+    content = [
+        Node(
+            tag="participants",
+            attrs={},
+            content=[enc_node(device, media_type=media_type) for device in devices],
+        )
+    ]
+    if device_identity:
+        content.append(Node(tag="device-identity", attrs={}, content=device_identity))
     if extra:
         content.extend(extra)
-    if not content:
-        raise MessageError("a message needs at least one encrypted payload")
     return Node(
         tag="message",
         attrs={"id": message_id, "to": to_jid, "type": message_type},
@@ -372,6 +396,7 @@ class IncomingMessage:
     devices: list[EncryptedDevice]
     sender_key: bytes | None = None
     participant: str | None = None
+    push_name: str | None = None
 
 
 def parse_incoming(node: Node) -> IncomingMessage:
@@ -383,7 +408,7 @@ def parse_incoming(node: Node) -> IncomingMessage:
         raise MessageError("message node is missing from or id")
     devices: list[EncryptedDevice] = []
     sender_key: bytes | None = None
-    for enc in children(node, "enc"):
+    for enc in _enc_nodes(node):
         payload = enc.content
         if not isinstance(payload, bytes):
             raise MessageError("enc content must be bytes")
@@ -413,7 +438,16 @@ def parse_incoming(node: Node) -> IncomingMessage:
         devices=devices,
         sender_key=sender_key,
         participant=node.attrs.get("participant"),
+        push_name=node.attrs.get("notify"),
     )
+
+
+def _enc_nodes(node: Node) -> list[Node]:
+    """`<enc>` entries: ours come in `<participants>`, old captures had them inline."""
+    found = children(node, "enc")
+    for participants in children(node, "participants"):
+        found.extend(children(participants, "enc"))
+    return found
 
 
 def encode_for_transport(payload: bytes) -> str:

@@ -173,6 +173,18 @@ def encode_signed_device_identity(identity: SignedDeviceIdentity) -> bytes:
     )
 
 
+def encode_account_identity(identity: SignedDeviceIdentity) -> bytes:
+    """Full `ADVSignedDeviceIdentity`, as sent inside every prekey message."""
+    return b"".join(
+        (
+            bytes_field(1, identity.details),
+            bytes_field(2, identity.account_signature_key),
+            bytes_field(3, identity.account_signature),
+            bytes_field(4, identity.device_signature),
+        )
+    )
+
+
 def build_pair_device_sign_reply(
     message_id: str, identity: SignedDeviceIdentity, key_index: int
 ) -> Node:

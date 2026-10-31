@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import secrets
 import time
@@ -39,6 +37,7 @@ from wapy.protocol.groups import (
     parse_group_info,
     parse_joined_groups,
     parse_participants_update,
+    participant_hash,
 )
 from wapy.protocol.messages import (
     EncryptedDevice,
@@ -239,6 +238,7 @@ class GroupSender:
         sender_keys: StoreSenderKeys,
         directory: GroupDirectory,
         *,
+        device_identity: bytes | None = None,
         ack_timeout: float = DEFAULT_ACK_TIMEOUT,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
@@ -247,6 +247,7 @@ class GroupSender:
         self._sessions = sessions
         self._sender_keys = sender_keys
         self._directory = directory
+        self._device_identity = device_identity
         self._ack_timeout = ack_timeout
         self._new_id = id_factory or _default_message_id
 
@@ -285,6 +286,10 @@ class GroupSender:
             message_id,
             encrypted,
             message_type=message_type,
+            media_type=None if message_type == "text" else message_type,
+            device_identity=(
+                self._device_identity if any(item.prekey for item in encrypted) else None
+            ),
             extra=[
                 group_enc_node(
                     ciphertext, media_type=None if message_type == "text" else message_type
@@ -319,12 +324,6 @@ class GroupSender:
                     continue
                 sent.append(device.jid)
         return encrypted, sent, failed
-
-
-def participant_hash(device_jids: list[str]) -> str:
-    """`phash`: the server uses it to detect a stale participant list."""
-    digest = hashlib.sha256("".join(sorted(device_jids)).encode("utf-8")).digest()
-    return "2:" + base64.b64encode(digest[:6]).decode("ascii").rstrip("=")
 
 
 def _default_message_id() -> str:

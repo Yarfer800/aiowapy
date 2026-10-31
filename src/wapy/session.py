@@ -26,6 +26,7 @@ from wapy.protocol.client_payload import build_login_payload, build_registration
 from wapy.protocol.pairing import (
     PairSuccess,
     build_pair_device_sign_reply,
+    encode_account_identity,
     parse_pair_success,
     verify_pair_success,
 )
@@ -604,6 +605,12 @@ class ClientSession:
         identity, key_index = verify_pair_success(pair, state.credentials)
         reply = build_pair_device_sign_reply(node.attrs["id"], identity, key_index=key_index)
         await self._send(transport, reply)
+        # Kept for every later prekey message: recipients use it to verify the
+        # device that started the session.
+        state.credentials = replace(
+            state.credentials, device_identity=encode_account_identity(identity)
+        )
+        await store.save_creds(state.credentials.to_dict())
         await self._send(transport, build_unified_session_node(unified_session_id()))
         state.jid = pair.jid
         state.lid = pair.lid

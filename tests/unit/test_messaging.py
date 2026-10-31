@@ -97,7 +97,9 @@ async def test_send_text_builds_one_enc_per_device() -> None:
     assert node.tag == "message"
     assert node.attrs["to"] == JID
     assert node.attrs["id"] == "MSG1"
-    assert isinstance(node.content, list) and len(node.content) == 2
+    participants = node.content[0]  # type: ignore[index]
+    assert participants.tag == "participants"
+    assert isinstance(participants.content, list) and len(participants.content) == 2
 
 
 async def test_message_carries_the_encoded_text() -> None:
@@ -105,7 +107,7 @@ async def test_message_carries_the_encoded_text() -> None:
 
     messenger, sender, _ = build([make_device("1:1@s.whatsapp.net")])
     await messenger.send_text(JID, "hello")
-    enc = sender.sent[0].content[0]  # type: ignore[index]
+    enc = sender.sent[0].content[0].content[0]  # type: ignore[index]
     assert isinstance(enc.content, bytes)
     assert enc.content.startswith(b"cipher-")
     # the encrypted payload is a Message protobuf, not the raw text
