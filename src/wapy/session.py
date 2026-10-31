@@ -107,6 +107,7 @@ class ClientSession:
         *,
         transport_factory: Callable[[], Transport],
         qr_callback: Callable[[PairingQr], Awaitable[None] | None] | None = None,
+        node_observer: Callable[[Node], None] | None = None,
         platform: str = "chrome",
         version: tuple[int, int, int] = DEFAULT_VERSION,
         max_attempts: int = 4,
@@ -114,6 +115,7 @@ class ClientSession:
         self._path = Path(path)
         self._factory = transport_factory
         self._qr_callback = qr_callback
+        self._observer = node_observer
         self._platform = platform
         self._version = version
         self._max_attempts = max_attempts
@@ -179,6 +181,8 @@ class ClientSession:
                 return "closed"
 
             node = decode_node(frame)
+            if self._observer is not None:
+                self._observer(node)
             error = parse_stream_error(node)
             if error is not None:
                 if error.code in STREAM_ERROR_LOGGED_OUT:
@@ -207,13 +211,16 @@ class ClientSession:
 
             if child(node, "pair-success") is not None:
                 await self._complete_pairing(transport, node, state, store)
-                return "paired"
+                state.paired = True
+                # Stay on the connection: the server finalises the device and then
+                # sends the 515 restart. Closing earlier can abort the registration.
+                continue
 
             if node.tag == "success":
                 await self._ensure_prekeys(transport, state, store)
                 return "connected"
             if node.tag == "failure":
-                raise SessionError(f"connection refused: {node.attrs}")
+                raise SessionError(f"connection refused: {node.attrs} (paired={state.paired})")
 
     async def _ensure_prekeys(
         self, transport: Transport, state: SessionState, store: SessionStore
@@ -288,11 +295,12 @@ class ClientSession:
         self, transport: Transport, node: Node, state: SessionState, store: SessionStore
     ) -> None:
         pair: PairSuccess = parse_pair_success(node, message_id=node.attrs.get("id", ""))
-        identity = verify_pair_success(pair, state.credentials)
-        reply = build_pair_device_sign_reply(node.attrs["id"], identity, key_index=0)
+        identity, key_index = verify_pair_success(pair, state.credentials)
+        reply = build_pair_device_sign_reply(node.attrs["id"], identity, key_index=key_index)
         await transport.send_encrypted(encode_node(reply))
         state.jid = pair.jid
         state.lid = pair.lid
+        state.paired = True
         stored = state.credentials.to_dict()
         stored["me"] = {"id": pair.jid, "lid": pair.lid}
         await store.save_creds(stored)

@@ -102,7 +102,7 @@ def test_verify_produces_a_valid_device_signature() -> None:
     pair = parse_pair_success(
         build_pair_success_node(credentials, account_key), message_id="pair-1"
     )
-    identity = verify_pair_success(pair, credentials)
+    identity, key_index = verify_pair_success(pair, credentials)
 
     device_message = (
         DEVICE_SIG_PREFIX + identity.details + credentials.identity_public + account_key.public
@@ -172,8 +172,8 @@ def test_reply_node_structure() -> None:
     pair = parse_pair_success(
         build_pair_success_node(credentials, account_key), message_id="pair-1"
     )
-    identity = verify_pair_success(pair, credentials)
-    reply = build_pair_device_sign_reply("pair-1", identity, key_index=3)
+    identity, key_index = verify_pair_success(pair, credentials)
+    reply = build_pair_device_sign_reply("pair-1", identity, key_index=key_index)
 
     assert reply.tag == "iq"
     assert reply.attrs == {"to": "s.whatsapp.net", "type": "result", "id": "pair-1"}
@@ -182,7 +182,7 @@ def test_reply_node_structure() -> None:
     assert sign_node.tag == "pair-device-sign"
     identity_node = sign_node.content[0]  # type: ignore[index]
     assert identity_node.tag == "device-identity"
-    assert identity_node.attrs["key-index"] == "3"
+    assert identity_node.attrs["key-index"] == "0"
 
     encoded = encode_signed_device_identity(identity)
     assert encoded == identity_node.content
@@ -197,6 +197,6 @@ def test_encoded_identity_omits_the_account_key() -> None:
     pair = parse_pair_success(
         build_pair_success_node(credentials, account_key), message_id="pair-1"
     )
-    identity = verify_pair_success(pair, credentials)
+    identity, key_index = verify_pair_success(pair, credentials)
     encoded = encode_signed_device_identity(identity)
     assert account_key.public not in encoded

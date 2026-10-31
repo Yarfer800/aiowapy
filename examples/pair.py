@@ -22,6 +22,12 @@ from wapy.session import ClientSession
 S_WHATSAPP_NET = "s.whatsapp.net"
 
 
+def log_node(node: object) -> None:
+    tag = getattr(node, "tag", "?")
+    attrs = getattr(node, "attrs", {})
+    print(f"  <- {tag} {attrs}", flush=True)
+
+
 def show_qr(item: PairingQr) -> None:
     print(render_ascii(item.qr, border=1), flush=True)
     print(f"scan now - this code lives {item.ttl}s\n", flush=True)
@@ -36,6 +42,7 @@ async def main() -> int:
         session_path,
         transport_factory=lambda: WhatsAppTransport(proxy=proxy, timeout=25),
         qr_callback=show_qr,
+        node_observer=log_node,
         platform=platform,
     )
     state = await session.run()

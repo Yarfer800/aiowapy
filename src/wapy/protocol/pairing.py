@@ -120,7 +120,9 @@ def parse_device_identity(details: bytes) -> DeviceIdentity:
     )
 
 
-def verify_pair_success(pair: PairSuccess, credentials: DeviceCredentials) -> SignedDeviceIdentity:
+def verify_pair_success(
+    pair: PairSuccess, credentials: DeviceCredentials
+) -> tuple[SignedDeviceIdentity, int]:
     """Check the HMAC and account signature, then sign the device identity."""
     prefix = HOSTED_ACCOUNT_SIG_PREFIX if pair.account_type == ADV_HOSTED else b""
     expected = hmac_sha256(_adv_secret_bytes(credentials), prefix + pair.details)
@@ -149,11 +151,14 @@ def verify_pair_success(pair: PairSuccess, credentials: DeviceCredentials) -> Si
         + account.account_signature_key
     )
     device_signature = sign(credentials.identity_key.private, device_message)
-    return SignedDeviceIdentity(
-        details=account.details,
-        account_signature_key=account.account_signature_key,
-        account_signature=account.account_signature,
-        device_signature=device_signature,
+    return (
+        SignedDeviceIdentity(
+            details=account.details,
+            account_signature_key=account.account_signature_key,
+            account_signature=account.account_signature,
+            device_signature=device_signature,
+        ),
+        device_identity.key_index,
     )
 
 
