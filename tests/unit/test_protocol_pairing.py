@@ -44,7 +44,7 @@ def build_pair_success_node(credentials: DeviceCredentials, account_key: KeyPair
     details = device_identity_details()
     account_signature = sign(
         account_key.private,
-        ACCOUNT_SIG_PREFIX + details + credentials.identity_signal_public,
+        ACCOUNT_SIG_PREFIX + details + credentials.identity_public,
     )
     signed_identity = (
         bytes_field(1, details)
@@ -105,10 +105,7 @@ def test_verify_produces_a_valid_device_signature() -> None:
     identity = verify_pair_success(pair, credentials)
 
     device_message = (
-        DEVICE_SIG_PREFIX
-        + identity.details
-        + credentials.identity_signal_public
-        + account_key.public
+        DEVICE_SIG_PREFIX + identity.details + credentials.identity_public + account_key.public
     )
     assert verify(credentials.identity_public, device_message, identity.device_signature)
 

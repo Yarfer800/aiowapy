@@ -129,10 +129,12 @@ def verify_pair_success(pair: PairSuccess, credentials: DeviceCredentials) -> Si
 
     account = parse_signed_device_identity(pair.details)
     device_identity = parse_device_identity(account.details)
+    # The signed message uses the raw 32-byte identity key, not the 0x05-prefixed
+    # wire form: the reference client only prefixes keys for signed prekes.
     signed_message = (
         _account_sig_prefix(device_identity.device_type)
         + account.details
-        + credentials.identity_signal_public
+        + credentials.identity_public
     )
     if not verify(account.account_signature_key, signed_message, account.account_signature):
         raise PairingError("account signature over the device identity is invalid")
@@ -143,7 +145,7 @@ def verify_pair_success(pair: PairSuccess, credentials: DeviceCredentials) -> Si
     device_message = (
         device_prefix
         + account.details
-        + credentials.identity_signal_public
+        + credentials.identity_public
         + account.account_signature_key
     )
     device_signature = sign(credentials.identity_key.private, device_message)

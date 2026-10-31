@@ -45,7 +45,7 @@ def pair_success_node(credentials: DeviceCredentials, node_id: str = "ps-1") -> 
     account = generate_keypair()
     details = varint_field(1, 1) + varint_field(2, 1_700_000_000) + varint_field(3, 0)
     account_signature = sign(
-        account.private, ACCOUNT_SIG_PREFIX + details + credentials.identity_signal_public
+        account.private, ACCOUNT_SIG_PREFIX + details + credentials.identity_public
     )
     signed = (
         bytes_field(1, details) + bytes_field(2, account.public) + bytes_field(3, account_signature)
