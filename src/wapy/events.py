@@ -53,6 +53,17 @@ class RevokeEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class HistorySyncEvent:
+    """One history chunk was stored: messages the bot never saw live."""
+
+    sync_type: int
+    chats: int
+    messages: int
+    chunk_order: int = 0
+    has_more: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class ReceiptEvent:
     """Delivery or read confirmation, for one message or a batch of them."""
 
@@ -105,6 +116,7 @@ class NotificationEvent:
 AnyEvent = (
     MessageEvent
     | ReactionEvent
+    | HistorySyncEvent
     | EditEvent
     | RevokeEvent
     | ReceiptEvent

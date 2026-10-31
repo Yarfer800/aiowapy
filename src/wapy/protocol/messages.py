@@ -37,7 +37,9 @@ FIELD_PROTOCOL_KEY = 1
 FIELD_PROTOCOL_TYPE = 2
 FIELD_PROTOCOL_EDITED = 14
 PROTOCOL_REVOKE = 0
+PROTOCOL_HISTORY_SYNC = 5
 PROTOCOL_MESSAGE_EDIT = 14
+FIELD_PROTOCOL_HISTORY = 6
 PROTOCOL_FIELD_TYPE = 2
 PROTOCOL_FIELD_KEY_SHARE = 7
 PROTOCOL_APP_STATE_KEY_SHARE = 6
@@ -76,6 +78,7 @@ class ParsedProtocol:
     kind: str
     message_id: str
     text: str | None = None
+    raw: bytes = b""
 
 
 def _message_key(jid: str, message_id: str, *, participant: str | None = None) -> bytes:
@@ -406,6 +409,12 @@ def _parse_protocol(protocol: bytes) -> ParsedProtocol | None:
     message_id = first_bytes(key, 3).decode("utf-8", errors="replace")
     if kind == PROTOCOL_REVOKE:
         return ParsedProtocol(kind="revoke", message_id=message_id)
+    if kind == PROTOCOL_HISTORY_SYNC:
+        return ParsedProtocol(
+            kind="history_sync",
+            message_id="",
+            raw=_maybe_bytes(inner, FIELD_PROTOCOL_HISTORY) or b"",
+        )
     if kind == PROTOCOL_MESSAGE_EDIT:
         edited = parse_fields(_maybe_bytes(inner, FIELD_PROTOCOL_EDITED) or b"")
         text = first_bytes(edited, 1) or first_bytes(parse_fields(first_bytes(edited, 6)), 1)

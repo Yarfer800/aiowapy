@@ -991,3 +991,38 @@ async def test_reply_carries_a_quote(tmp_path: Path) -> None:
         assert parsed.quote.text == "question"
     finally:
         await client.close()
+
+
+async def test_incoming_history_chunk_is_stored(tmp_path: Path) -> None:
+    import gzip
+
+    from wapy.events import HistorySyncEvent
+    from wapy.pb import bytes_field, varint_field
+    from wapy.protocol.history import encode_conversation, encode_history_message
+    from wapy.protocol.messages import encode_text
+
+    client, server, credentials = await connected_client(tmp_path)
+    events: asyncio.Queue[HistorySyncEvent] = asyncio.Queue()
+    try:
+        client.router.on(HistorySyncEvent)(events.put_nowait)
+
+        inner = encode_history_message(
+            PEER, "H-1", encode_text("old message"), timestamp=1234, participant=PEER
+        )
+        blob = bytes_field(2, encode_conversation(PEER, [inner], name="Alice"))
+        blob += varint_field(6, 100)  # progress: this is the last chunk
+        notification = bytes_field(11, gzip.compress(blob)) + varint_field(9, 100)
+        protocol = varint_field(2, 5) + bytes_field(6, notification)
+
+        server.push(
+            await incoming_payload(credentials, bytes_field(12, protocol), message_id="HS-1")
+        )
+        event = await asyncio.wait_for(events.get(), timeout=5)
+        assert event.messages == 1
+        assert event.has_more is False
+
+        history = await client.get_chat_history(PEER)
+        assert [message.text for message in history] == ["old message"]
+        assert history[0].timestamp == 1234
+    finally:
+        await client.close()

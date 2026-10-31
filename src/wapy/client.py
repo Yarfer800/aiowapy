@@ -20,6 +20,7 @@ from wapy.events import (
     ConnectedEvent,
     DisconnectedEvent,
     EditEvent,
+    HistorySyncEvent,
     MessageEvent,
     NotificationEvent,
     PresenceEvent,
@@ -30,6 +31,7 @@ from wapy.events import (
 from wapy.messaging.appstate import AppStateSync, SyncedCollection
 from wapy.messaging.devices import CachedDeviceResolver
 from wapy.messaging.groups import GroupSender, GroupService, StoreSenderKeys
+from wapy.messaging.history import HistorySyncService
 from wapy.messaging.media import MediaStorage, MediaTransport, UrllibMediaTransport
 from wapy.messaging.messenger import Messenger, SendResult
 from wapy.messaging.real import (
@@ -186,6 +188,7 @@ class WhatsAppClient:
         self._sender_keys: StoreSenderKeys | None = None
         self._media: MediaStorage | None = None
         self._app_state: AppStateSync | None = None
+        self._history: HistorySyncService | None = None
         self._media_transport: MediaTransport = media_transport or UrllibMediaTransport()
         self._session: ClientSession | None = None
 
@@ -340,6 +343,7 @@ class WhatsAppClient:
         self._groups = GroupService(stream, self._store)
         self._media = MediaStorage(stream, self._media_transport)
         self._app_state = AppStateSync(stream, self._store)
+        self._history = HistorySyncService(self._media, self._store)
         self._group_sender = GroupSender(
             StreamNodeSender(stream),
             self._build_resolver(stream, state),
@@ -1037,6 +1041,13 @@ class WhatsAppClient:
         if protocol is None:  # pragma: no cover - guarded by the caller
             return
         store = self._require_store()
+        if protocol.kind == "history_sync":
+            if protocol.raw:
+                task = asyncio.get_running_loop().create_task(
+                    self._store_history(protocol.raw), name="wapy-history-sync"
+                )
+                self._track(task)
+            return
         if protocol.kind == "revoke":
             await store.mark_message_deleted(received.chat_jid, protocol.message_id)
             self._emit(
@@ -1061,6 +1072,25 @@ class WhatsAppClient:
                     timestamp=received.timestamp,
                 )
             )
+
+    async def _store_history(self, raw_notification: bytes) -> None:
+        service = self._history
+        if service is None:
+            return
+        try:
+            result = await service.handle_raw(raw_notification)
+        except Exception as exc:
+            logger.warning("history sync failed: %s", exc)
+            return
+        self._emit(
+            HistorySyncEvent(
+                sync_type=result.sync_type,
+                chats=result.chats,
+                messages=result.messages,
+                chunk_order=result.chunk_order,
+                has_more=result.has_more,
+            )
+        )
 
     async def _accept_app_state_keys(self, keys: tuple[tuple[bytes, bytes], ...]) -> None:
         store = self._require_store()

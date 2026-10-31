@@ -79,6 +79,6 @@ def test_long_text_with_quote_still_parses() -> None:
 def test_unknown_protocol_message_is_ignored() -> None:
     from wapy.pb import bytes_field, message_field, varint_field_explicit
 
-    payload = bytes_field(12, bytes_field(1, bytes_field(3, b"ID")) + varint_field_explicit(2, 5))
+    payload = bytes_field(12, bytes_field(1, bytes_field(3, b"ID")) + varint_field_explicit(2, 9))
     assert parse_message(payload).protocol is None
     assert parse_message(message_field(12, b"")).protocol is None
