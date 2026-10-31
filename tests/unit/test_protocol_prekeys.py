@@ -56,7 +56,7 @@ def test_upload_node_matches_wire_layout(credentials: DeviceCredentials) -> None
     assert node.tag == "iq"
     assert node.attrs["xmlns"] == "encrypt"
     assert node.attrs["type"] == "set"
-    assert node.attrs["to"] == "s.whatsapp.net"
+    assert node.attrs["to"] == "@s.whatsapp.net"
     assert node.attrs["id"] == "abc123"
 
     assert content_of(node, "registration") == credentials.registration_id.to_bytes(4, "big")

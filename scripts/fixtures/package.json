@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Dev-only generator of golden vectors from the reference implementation",
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc14"
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "https-proxy-agent": "^9.1.0",
+    "pino": "^10.4.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }

@@ -176,7 +176,7 @@ def test_reply_node_structure() -> None:
     reply = build_pair_device_sign_reply("pair-1", identity, key_index=key_index)
 
     assert reply.tag == "iq"
-    assert reply.attrs == {"to": "s.whatsapp.net", "type": "result", "id": "pair-1"}
+    assert reply.attrs == {"to": "@s.whatsapp.net", "type": "result", "id": "pair-1"}
     assert isinstance(reply.content, list)
     sign_node = reply.content[0]
     assert sign_node.tag == "pair-device-sign"

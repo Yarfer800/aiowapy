@@ -29,7 +29,7 @@ from wapy.errors import WapyError
 from wapy.protocol.stream import child
 from wapy.protocol.wabinary import Node
 
-S_WHATSAPP_NET = "s.whatsapp.net"
+S_WHATSAPP_NET = "@s.whatsapp.net"
 INITIAL_PREKEY_COUNT = 812
 MIN_PREKEY_COUNT = 5
 

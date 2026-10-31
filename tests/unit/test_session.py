@@ -78,8 +78,10 @@ class ScriptedTransport:
     scripts: list[list[Node]] = []
     handshakes: list[bytes] = []
     gap: float = 0.0
+    instances: list[ScriptedTransport] = []
 
     def __init__(self) -> None:
+        ScriptedTransport.instances.append(self)
         self._frames = list(self.scripts.pop(0)) if self.scripts else []
         self.sent: list[Node] = []
 
@@ -281,3 +283,33 @@ def test_parse_stream_error_prefers_child_code() -> None:
     )
     error = parse_stream_error(node)
     assert error is not None and error.code == 515
+
+
+def test_unified_session_id_is_within_a_week() -> None:
+    from wapy.session import unified_session_id
+
+    value = int(unified_session_id(1_700_000_000.0))
+    assert 0 <= value < 604_800_000
+
+
+async def test_pairing_reply_is_addressed_to_the_whatsapp_server(session_path: Path) -> None:
+    credentials = generate_credentials()
+    async with SessionStore(session_path) as store:
+        await store.save_creds(credentials.to_dict())
+
+    ScriptedTransport.scripts = [
+        [pair_device_node(["2@a"]), pair_success_node(credentials), stream_error_node(515)]
+    ]
+    ScriptedTransport.handshakes = []
+    ScriptedTransport.instances = []
+    session = ClientSession(
+        session_path, transport_factory=ScriptedTransport, qr_callback=lambda item: None
+    )
+    await asyncio.wait_for(session.run(), timeout=20)
+
+    transport = ScriptedTransport.instances[0]
+    replies = [
+        node for node in transport.sent if node.tag == "iq" and node.attrs.get("type") == "result"
+    ]
+    assert any(node.attrs["to"] == "@s.whatsapp.net" for node in replies)
+    assert any(node.tag == "ib" for node in transport.sent)

@@ -25,7 +25,7 @@ from wapy.pb import bytes_field, first_bytes, first_int, parse_fields
 from wapy.protocol.stream import child
 from wapy.protocol.wabinary import Node
 
-S_WHATSAPP_NET = "s.whatsapp.net"
+S_WHATSAPP_NET = "@s.whatsapp.net"
 
 ACCOUNT_SIG_PREFIX = bytes([6, 0])
 DEVICE_SIG_PREFIX = bytes([6, 1])

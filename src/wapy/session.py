@@ -9,6 +9,7 @@ network.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -39,17 +40,41 @@ from wapy.protocol.stream import child, children
 from wapy.protocol.wabinary import Node, decode_node, encode_node
 from wapy.store import SessionStore
 
-S_WHATSAPP_NET = "s.whatsapp.net"
+S_WHATSAPP_NET = "@s.whatsapp.net"
 DEFAULT_VERSION = (2, 3000, 1043857760)
 STREAM_ERROR_RESTART = 515
 STREAM_ERROR_LOGGED_OUT = {401, 403, 409}
 
 QR_FIRST_TTL = 60
 QR_NEXT_TTL = 20
+KEEPALIVE_INTERVAL = 30.0
+KEEPALIVE_GRACE = 5.0
 
 
 def new_message_id() -> str:
     return secrets.token_hex(4)
+
+
+def unified_session_id(now_seconds: float | None = None) -> str:
+    """Session marker the reference client sends right after pairing."""
+    now = int((now_seconds if now_seconds is not None else time.time()) * 1000)
+    return str((now + 3 * 86_400_000) % 604_800_000)
+
+
+def build_unified_session_node(session_id: str) -> Node:
+    return Node(
+        tag="ib",
+        attrs={},
+        content=[Node(tag="unified_session", attrs={"id": session_id})],
+    )
+
+
+def build_ping_node(message_id: str) -> Node:
+    return Node(
+        tag="iq",
+        attrs={"id": message_id, "to": S_WHATSAPP_NET, "type": "get", "xmlns": "w:p"},
+        content=[Node(tag="ping", attrs={})],
+    )
 
 
 class SessionError(WapyError):
@@ -125,6 +150,7 @@ class ClientSession:
         self._platform = platform
         self._version = version
         self._max_attempts = max_attempts
+        self._last_recv = 0.0
 
     async def run(self) -> SessionState:
         async with SessionStore(self._path) as store:
@@ -160,11 +186,29 @@ class ClientSession:
     async def _attempt(self, state: SessionState, store: SessionStore) -> str:
         transport = self._factory()
         await transport.connect()
+        keepalive = asyncio.create_task(self._keepalive_loop(transport))
         try:
             await transport.handshake(client_payload=self._payload(state))
+            self._last_recv = time.monotonic()
             return await self._serve(transport, state, store)
         finally:
+            keepalive.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await keepalive
             await transport.close()
+
+    async def _keepalive_loop(self, transport: Transport) -> None:
+        """Node-level keepalive: WebSocket pings are disabled, so this is the alarm.
+
+        The reference client pings every 30 s and treats more than 35 s of silence
+        as a lost connection.
+        """
+        while True:
+            await asyncio.sleep(KEEPALIVE_INTERVAL)
+            if time.monotonic() - self._last_recv > KEEPALIVE_INTERVAL + KEEPALIVE_GRACE:
+                await transport.close()
+                return
+            await self._send(transport, build_ping_node(new_message_id()))
 
     async def _serve(self, transport: Transport, state: SessionState, store: SessionStore) -> str:
         source = None
@@ -190,6 +234,7 @@ class ClientSession:
                     return "closed"
                 raise
 
+            self._last_recv = time.monotonic()
             node = decode_node(frame)
             if self._observer is not None:
                 self._observer(node)
@@ -333,6 +378,7 @@ class ClientSession:
         identity, key_index = verify_pair_success(pair, state.credentials)
         reply = build_pair_device_sign_reply(node.attrs["id"], identity, key_index=key_index)
         await self._send(transport, reply)
+        await self._send(transport, build_unified_session_node(unified_session_id()))
         state.jid = pair.jid
         state.lid = pair.lid
         state.paired = True
