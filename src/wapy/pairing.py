@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 from typing import Final
 
+from wapy.creds import DeviceCredentials
 from wapy.errors import WapyError
 from wapy.qr.encoder import QrCode, encode
 
@@ -69,15 +70,17 @@ def build_pairing_payload(
 
 def pairing_qr(
     ref: str,
-    noise_public: bytes,
-    identity_public: bytes,
-    adv_secret: str,
+    credentials: DeviceCredentials,
     *,
     platform: str = "chrome",
     level: str = "M",
 ) -> tuple[str, QrCode]:
-    """Build the payload and encode it, returning both."""
+    """Build the pairing payload from generated credentials and encode it."""
     payload = build_pairing_payload(
-        ref, noise_public, identity_public, adv_secret, platform=platform
+        ref,
+        credentials.noise_public,
+        credentials.identity_public,
+        credentials.adv_secret_key,
+        platform=platform,
     )
     return payload, encode(payload, level=level)

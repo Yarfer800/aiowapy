@@ -5,6 +5,7 @@ import zlib
 
 import pytest
 
+from wapy.creds import generate_credentials
 from wapy.pairing import (
     PAIRING_URL,
     PLATFORM_IDS,
@@ -62,9 +63,15 @@ def test_wrong_key_length_is_rejected() -> None:
 
 
 def test_pairing_qr_returns_payload_and_symbol() -> None:
-    payload, qr = pairing_qr("2@ref", NOISE_KEY, IDENTITY_KEY, ADV_SECRET)
+    credentials = generate_credentials()
+    payload, qr = pairing_qr("2@ref", credentials)
     assert qr.version >= 5
-    assert payload == build_pairing_payload("2@ref", NOISE_KEY, IDENTITY_KEY, ADV_SECRET)
+    assert payload == build_pairing_payload(
+        "2@ref",
+        credentials.noise_public,
+        credentials.identity_public,
+        credentials.adv_secret_key,
+    )
 
 
 def test_ascii_render_has_border_and_double_width() -> None:
