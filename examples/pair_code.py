@@ -35,7 +35,7 @@ async def main() -> int:
         attrs = getattr(node, "attrs", {})
         print(f"  <- {tag} {attrs}", flush=True)
         content = getattr(node, "content", None)
-        if tag == "notification" and isinstance(content, list):
+        if tag in ("notification", "iq") and isinstance(content, list):
             for item in content:
                 body = item.content
                 if isinstance(body, bytes):

@@ -319,8 +319,21 @@ class ClientSession:
         node = decode_node(frame)
         if self._observer is not None:
             self._observer(node)
+        error = self._node_error(node)
+        if error is not None:
+            raise SessionError(f"server rejected the request: {error[0]} {error[1]}".strip())
         await self._ack_server_request(transport, node)
         return node
+
+    @staticmethod
+    def _node_error(node: Node) -> tuple[str, str] | None:
+        """Extract `<error code=... text=.../>` from an iq error response."""
+        if node.tag != "iq" or node.attrs.get("type") != "error":
+            return None
+        error = child(node, "error")
+        code = error.attrs.get("code", "?") if error is not None else "?"
+        text = error.attrs.get("text", "") if error is not None else ""
+        return code, text
 
     async def _ack_server_request(self, transport: Transport, node: Node) -> None:
         """The server sends `iq type=set` requests and expects a result for each."""
