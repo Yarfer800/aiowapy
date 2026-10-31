@@ -33,6 +33,7 @@ node_modules/
 *.pcapng
 *.mitm
 keys.log
+/flows*
 
 # Local scratch
 /tmp/
