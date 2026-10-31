@@ -64,11 +64,18 @@ def new_message_id() -> str:
     return secrets.token_hex(4)
 
 
-def _digits(phone: str) -> str:
-    digits = "".join(char for char in phone if char.isdigit())
-    if not digits:
+def phone_jid(phone: str) -> str:
+    """`+<country><number>@s.whatsapp.net`, as the reference client sends it.
+
+    The server rejects the digit-only form for code pairing (observed as an iq
+    error), so the leading plus is preserved.
+    """
+    cleaned = "".join(char for char in phone if char.isdigit() or char == "+")
+    if not cleaned.strip("+"):
         raise SessionError(f"phone number has no digits: {phone!r}")
-    return digits
+    if not cleaned.startswith("+"):
+        cleaned = "+" + cleaned
+    return f"{cleaned}@s.whatsapp.net"
 
 
 def _reason_code(node: Node) -> int:
@@ -242,7 +249,7 @@ class ClientSession:
         """
         async with SessionStore(self._path) as store:
             state = await self._load_state(store)
-            phone_jid = f"{_digits(phone)}@s.whatsapp.net"
+            target_jid = phone_jid(phone)
             # A fresh pairing key per attempt, as the reference implementation does:
             # reusing one across codes weakens the wrapping of the ephemeral key.
             state.credentials = replace(state.credentials, pairing_ephemeral_key=generate_keypair())
@@ -261,7 +268,7 @@ class ClientSession:
                     transport,
                     build_companion_hello(
                         state.credentials,
-                        phone_jid,
+                        target_jid,
                         code,
                         new_message_id(),
                         salt=secrets.token_bytes(32),
@@ -274,7 +281,7 @@ class ClientSession:
                     state.credentials,
                     request,
                     code,
-                    phone_jid,
+                    target_jid,
                     new_message_id(),
                     random=secrets.token_bytes(32),
                     link_code_salt=secrets.token_bytes(32),
@@ -285,7 +292,7 @@ class ClientSession:
                     state.credentials,
                     adv_secret_key=base64.b64encode(adv_secret).decode("ascii"),
                 )
-                state.jid = phone_jid
+                state.jid = target_jid
                 await self._await_success(transport, state, store)
                 await self._store_me(store, state)
                 await self._ensure_prekeys(transport, state, store)

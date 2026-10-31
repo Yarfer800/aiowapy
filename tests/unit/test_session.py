@@ -406,7 +406,7 @@ async def test_pairing_by_phone_number_completes(
         session.pair_with_phone_number("+79 646 669 102", code), timeout=20
     )
 
-    assert state.jid == "79646669102@s.whatsapp.net"
+    assert state.jid == "+79646669102@s.whatsapp.net"
     transport = ScriptedTransport.instances[0]
     stages = [
         child(node, "link_code_companion_reg").attrs["stage"]
@@ -419,7 +419,7 @@ async def test_pairing_by_phone_number_completes(
         stored = await store.load_creds()
         available = await store.count_available_prekeys()
     assert stored is not None
-    assert stored["me"]["id"] == "79646669102@s.whatsapp.net"
+    assert stored["me"]["id"] == "+79646669102@s.whatsapp.net"
     assert stored["adv_secret_key"] != credentials.adv_secret_key
     assert available > 0
 
@@ -479,3 +479,12 @@ async def test_phone_pairing_acknowledges_server_requests(session_path: Path) ->
         if n.tag == "iq" and n.attrs.get("type") == "result" and n.attrs.get("id") == "srv-1"
     ]
     assert acks and acks[0].attrs["to"] == "@s.whatsapp.net"
+
+
+def test_phone_jid_keeps_the_leading_plus() -> None:
+    from wapy.session import phone_jid
+
+    assert phone_jid("+79 646 669 102") == "+79646669102@s.whatsapp.net"
+    assert phone_jid("79646669102") == "+79646669102@s.whatsapp.net"
+    with pytest.raises(SessionError):
+        phone_jid("+ - ")
