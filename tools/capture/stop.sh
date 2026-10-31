@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
-# Stop the capture: kill mitmdump and remove the nftables table.
-# Without arguments also flushes captured IP sets, so no stale rules remain.
+# Stop the capture started by start.sh.
 
 set -euo pipefail
 
-echo "==> Removing nftables redirect"
-sudo nft delete table inet wacap 2>/dev/null || echo "    table already absent"
+CAPTURE_DIR="${WACAP_DIR:-$HOME/captures}"
+PORT="${WACAP_PORT:-8899}"
+PID_FILE="$CAPTURE_DIR/wacap.pid"
 
-if [[ -f /run/wacap.pid ]]; then
-    pid="$(sudo cat /run/wacap.pid)"
-    echo "==> Stopping mitmdump (pid $pid)"
-    sudo kill "$pid" 2>/dev/null || true
-    for _ in $(seq 1 50); do
-        sudo kill -0 "$pid" 2>/dev/null || break
+if [[ -f "$PID_FILE" ]]; then
+    pid="$(cat "$PID_FILE")"
+    if kill "$pid" 2>/dev/null; then
+        echo "==> Stopped mitmproxy (pid $pid)"
+    fi
+    for _ in $(seq 1 30); do
+        kill -0 "$pid" 2>/dev/null || break
         sleep 0.1
     done
-    sudo kill -9 "$pid" 2>/dev/null || true
-    sudo rm -f /run/wacap.pid
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$PID_FILE"
+fi
+
+# A stale pid file must not leave an orphan holding the port.
+if [[ -n "$(ss -ltnH "sport = :$PORT" 2>/dev/null)" ]]; then
+    echo "==> Freeing port $PORT"
+    fuser -k "${PORT}/tcp" 2>/dev/null || true
 fi
 
 echo "Done."
