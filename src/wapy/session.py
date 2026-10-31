@@ -243,6 +243,10 @@ class ClientSession:
         async with SessionStore(self._path) as store:
             state = await self._load_state(store)
             phone_jid = f"{_digits(phone)}@s.whatsapp.net"
+            # A fresh pairing key per attempt, as the reference implementation does:
+            # reusing one across codes weakens the wrapping of the ephemeral key.
+            state.credentials = replace(state.credentials, pairing_ephemeral_key=generate_keypair())
+            await store.save_creds(state.credentials.to_dict())
             transport = self._factory()
             await transport.connect()
             keepalive = asyncio.create_task(self._keepalive_loop(transport))
