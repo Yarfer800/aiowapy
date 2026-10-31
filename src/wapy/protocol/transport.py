@@ -78,17 +78,19 @@ class WhatsAppTransport:
         headers: dict[str, str] | None = None,
         timeout: float = 20.0,
         keypair_factory: Callable[[], KeyPair] | None = None,
+        intro: bytes | None = None,
     ) -> None:
         self._url = url
         self._proxy = proxy
         self._routing_info = routing_info
+        # The reference client sends no User-Agent at all on the upgrade request.
         self._headers = {
             "Origin": "https://web.whatsapp.com",
-            "User-Agent": "wapy/0.1",
             **(headers or {}),
         }
         self._timeout = timeout
         self._keypair_factory = keypair_factory or generate_keypair
+        self._intro = intro
         self._socket: Any | None = None
         self._parser = FrameParser()
         self._noise: NoiseTransport | None = None
@@ -107,6 +109,7 @@ class WhatsAppTransport:
                     self._url,
                     proxy=self._proxy,
                     additional_headers=self._headers,
+                    user_agent_header=None,
                     max_size=None,
                     open_timeout=self._timeout,
                     close_timeout=2,
@@ -130,7 +133,7 @@ class WhatsAppTransport:
             raise TransportError("not connected")
         frame = encode_frame(
             payload,
-            intro=build_intro_header(self._routing_info),
+            intro=self._intro or build_intro_header(self._routing_info),
             include_intro=not self._intro_sent,
         )
         self._intro_sent = True
@@ -154,7 +157,7 @@ class WhatsAppTransport:
         """Run the Noise handshake and switch the connection into transport mode."""
         handshake = NoiseHandshake(
             key_pair or self._keypair_factory(),
-            prologue=build_intro_header(self._routing_info),
+            prologue=self._intro or build_intro_header(self._routing_info),
             trusted_root_key=trusted_root_key,
         )
         await self.send_frame(handshake.client_hello())

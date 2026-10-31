@@ -59,6 +59,11 @@ def varint_field(field_number: int, value: int) -> bytes:
     return tag(field_number, WIRE_VARINT) + encode_varint(value)
 
 
+def varint_field_explicit(field_number: int, value: int) -> bytes:
+    """Encode even a zero value; some protobuf writers do this for set fields."""
+    return tag(field_number, WIRE_VARINT) + encode_varint(value)
+
+
 def bytes_field(field_number: int, value: bytes) -> bytes:
     if not value:
         return b""
