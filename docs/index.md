@@ -22,6 +22,11 @@ The distribution is called **aiowapy**, the import is **`wapy`**:
 from aiowapy import Client
 ```
 
+![aiowapy offline demo: install, connect, receive /ping, answer pong](assets/demo.gif)
+
+*Real output of `examples/offline_demo.py`. The server is scripted; the Signal sessions,
+stanzas and the session file are the production code.*
+
 ## A bot in 20 lines
 
 ```python

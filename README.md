@@ -26,6 +26,12 @@ from aiowapy import Client
 
 Full documentation: **https://yarfer800.github.io/aiowapy/**
 
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="aiowapy: install, connect to a scripted server, receive /ping and answer pong" width="820">
+</p>
+
+<p align="center"><em>Real run of <code>examples/offline_demo.py</code>: the server is scripted, the Signal sessions, stanzas and session file are the production code.</em></p>
+
 ## Quick start
 
 ```python
