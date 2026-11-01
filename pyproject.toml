@@ -34,11 +34,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Yarfer800/wapy"
-Documentation = "https://yarfer800.github.io/wapy/"
-Repository = "https://github.com/Yarfer800/wapy"
-Issues = "https://github.com/Yarfer800/wapy/issues"
-Changelog = "https://github.com/Yarfer800/wapy/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Yarfer800/aiowapy"
+Documentation = "https://yarfer800.github.io/aiowapy/"
+Repository = "https://github.com/Yarfer800/aiowapy"
+Issues = "https://github.com/Yarfer800/aiowapy/issues"
+Changelog = "https://github.com/Yarfer800/aiowapy/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 docs = [

@@ -1,7 +1,7 @@
 # aiowapy
 
-[![CI](https://github.com/Yarfer800/wapy/actions/workflows/ci.yml/badge.svg)](https://github.com/Yarfer800/wapy/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-yarfer800.github.io%2Fwapy-green)](https://yarfer800.github.io/wapy/)
+[![CI](https://github.com/Yarfer800/aiowapy/actions/workflows/ci.yml/badge.svg)](https://github.com/Yarfer800/aiowapy/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-yarfer800.github.io%2Faiowapy-green)](https://yarfer800.github.io/aiowapy/)
 [![PyPI](https://img.shields.io/pypi/v/aiowapy.svg)](https://pypi.org/project/aiowapy/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/aiowapy/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -24,7 +24,7 @@ The distribution is called **aiowapy**, the import is **`aiowapy`**:
 from aiowapy import Client
 ```
 
-Full documentation: **https://yarfer800.github.io/wapy/**
+Full documentation: **https://yarfer800.github.io/aiowapy/**
 
 ## Quick start
 

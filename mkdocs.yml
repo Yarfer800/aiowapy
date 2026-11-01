@@ -1,8 +1,8 @@
 site_name: aiowapy
 site_description: Async WhatsApp Multi-Device client for Python, implemented from the protocol up.
-site_url: https://yarfer800.github.io/wapy/
-repo_url: https://github.com/Yarfer800/wapy
-repo_name: Yarfer800/wapy
+site_url: https://yarfer800.github.io/aiowapy/
+repo_url: https://github.com/Yarfer800/aiowapy
+repo_name: Yarfer800/aiowapy
 edit_uri: edit/main/docs/
 copyright: MIT licensed
 
