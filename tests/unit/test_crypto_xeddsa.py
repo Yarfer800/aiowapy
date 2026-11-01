@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from wapy.crypto.xeddsa import (
+from aiowapy.crypto.xeddsa import (
     ORDER,
     XEdDSAError,
     montgomery_to_edwards,

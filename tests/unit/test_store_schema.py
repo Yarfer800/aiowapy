@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from wapy.errors import StoreNotOpenError
-from wapy.store import SCHEMA_VERSION, SessionStore
+from aiowapy.errors import StoreNotOpenError
+from aiowapy.store import SCHEMA_VERSION, SessionStore
 
 
 async def test_open_creates_file_with_private_permissions(tmp_path: Path) -> None:

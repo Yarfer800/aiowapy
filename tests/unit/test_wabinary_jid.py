@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.protocol.wabinary.jid import (
+from aiowapy.protocol.wabinary.jid import (
     WA_DOMAIN_HOSTED,
     WA_DOMAIN_HOSTED_LID,
     WA_DOMAIN_LID,

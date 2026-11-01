@@ -4,18 +4,18 @@ import gzip
 
 import pytest
 
-from wapy.messaging.history import HistorySyncService
-from wapy.models import MEDIA_IMAGE, MediaInfo
-from wapy.pb import bytes_field, message_field, varint_field
-from wapy.protocol.history import (
+from aiowapy.messaging.history import HistorySyncService
+from aiowapy.models import MEDIA_IMAGE, MediaInfo
+from aiowapy.pb import bytes_field, message_field, varint_field
+from aiowapy.protocol.history import (
     HistoryError,
     encode_conversation,
     encode_history_message,
     parse_history_sync,
     parse_notification,
 )
-from wapy.protocol.messages import encode_media, encode_text, parse_message
-from wapy.store import SessionStore
+from aiowapy.protocol.messages import encode_media, encode_text, parse_message
+from aiowapy.store import SessionStore
 
 CHAT = "491234567890@s.whatsapp.net"
 GROUP = "120363000000000001@g.us"

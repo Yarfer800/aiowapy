@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.crypto.sender_key import (
+from aiowapy.crypto.sender_key import (
     SenderKeyState,
     distribution_message,
     encrypt,
     from_distribution,
+    serialize_state,
 )
-from wapy.crypto.sender_key import (
+from aiowapy.crypto.sender_key import (
     decrypt as sk_decrypt,
 )
-from wapy.messaging.devices import DeviceInfo
-from wapy.messaging.groups import (
+from aiowapy.messaging.devices import DeviceInfo
+from aiowapy.messaging.groups import (
     GroupSender,
     GroupSendError,
     GroupService,
@@ -21,8 +22,8 @@ from wapy.messaging.groups import (
     group_info_to_dict,
     participant_hash,
 )
-from wapy.messaging.receiving import DecryptError, MessageReceiver
-from wapy.protocol.groups import (
+from aiowapy.messaging.receiving import DecryptError, MessageReceiver
+from aiowapy.protocol.groups import (
     ACTION_ADD,
     ACTION_REMOVE,
     ADMIN,
@@ -38,14 +39,14 @@ from wapy.protocol.groups import (
     parse_joined_groups,
     parse_participants_update,
 )
-from wapy.protocol.messages import (
+from aiowapy.protocol.messages import (
     EncryptedDevice,
     encode_text,
     group_enc_node,
     parse_message,
 )
-from wapy.protocol.wabinary import Node, decode_node, encode_node
-from wapy.store import SessionStore
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.store import SessionStore
 
 GROUP = "120363000000000001@g.us"
 OWN = "491111111111:1@s.whatsapp.net"
@@ -306,9 +307,7 @@ async def test_sender_key_store_roundtrip(tmp_path) -> None:
         receiver = from_distribution(distribution)
         assert sk_decrypt(receiver, ciphertext) == b"one"
 
-        await store.put_sender_key(
-            GROUP, PEER, __import__("wapy").crypto.sender_key.serialize_state(receiver)
-        )
+        await store.put_sender_key(GROUP, PEER, serialize_state(receiver))
 
         second = await keys.encrypt(GROUP, b"two")
         assert sk_decrypt(receiver, second) == b"two"

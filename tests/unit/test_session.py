@@ -6,15 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from wapy.creds import DeviceCredentials, generate_credentials
-from wapy.crypto.primitives import generate_keypair, hmac_sha256
-from wapy.crypto.xeddsa import sign
-from wapy.pb import bytes_field, first_int, parse_fields, varint_field
-from wapy.protocol.pairing import ACCOUNT_SIG_PREFIX
-from wapy.protocol.stream import child
-from wapy.protocol.wabinary import Node, decode_node, encode_node
-from wapy.session import ClientSession, SessionError, parse_stream_error
-from wapy.store import SessionStore
+from aiowapy.creds import DeviceCredentials, generate_credentials
+from aiowapy.crypto.primitives import generate_keypair, hmac_sha256
+from aiowapy.crypto.xeddsa import sign
+from aiowapy.pb import bytes_field, first_int, parse_fields, varint_field
+from aiowapy.protocol.pairing import ACCOUNT_SIG_PREFIX
+from aiowapy.protocol.stream import child
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.session import ClientSession, SessionError, parse_stream_error
+from aiowapy.store import SessionStore
 
 
 def stream_error_node(code: int, text: str = "") -> Node:
@@ -215,8 +215,8 @@ async def test_qr_rotation_uses_next_ref(
     async with SessionStore(session_path) as store:
         await store.save_creds(credentials.to_dict())
 
-    monkeypatch.setattr("wapy.session.QR_FIRST_TTL", 0.05)
-    monkeypatch.setattr("wapy.session.QR_NEXT_TTL", 0.05)
+    monkeypatch.setattr("aiowapy.session.QR_FIRST_TTL", 0.05)
+    monkeypatch.setattr("aiowapy.session.QR_NEXT_TTL", 0.05)
     monkeypatch.setattr(ScriptedTransport, "gap", 0.2)
     ScriptedTransport.scripts = [
         [pair_device_node(["2@first", "2@second"]), stream_error_node(515)]
@@ -287,7 +287,7 @@ def test_parse_stream_error_prefers_child_code() -> None:
 
 
 def test_unified_session_id_is_within_a_week() -> None:
-    from wapy.session import unified_session_id
+    from aiowapy.session import unified_session_id
 
     value = int(unified_session_id(1_700_000_000.0))
     assert 0 <= value < 604_800_000
@@ -354,7 +354,7 @@ def _pairing_ref_node(ref: bytes = b"ref") -> Node:
 def _companion_finish_node(
     server_ephemeral_public: bytes, primary_identity_public: bytes, code: str
 ) -> Node:
-    from wapy.protocol.pairing_code import wrap_ephemeral_public
+    from aiowapy.protocol.pairing_code import wrap_ephemeral_public
 
     wrapped = wrap_ephemeral_public(code, server_ephemeral_public, salt=bytes(32), iv=bytes(16))
     return Node(
@@ -381,7 +381,7 @@ def _companion_finish_node(
 async def test_pairing_by_phone_number_completes(
     session_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from wapy.crypto.primitives import generate_keypair
+    from aiowapy.crypto.primitives import generate_keypair
 
     monkeypatch.setattr(ScriptedTransport, "gap", 0.0)
     credentials = generate_credentials()
@@ -425,7 +425,7 @@ async def test_pairing_by_phone_number_completes(
 
 
 async def test_phone_pairing_rejects_a_failure(session_path: Path) -> None:
-    from wapy.crypto.primitives import generate_keypair
+    from aiowapy.crypto.primitives import generate_keypair
 
     credentials = generate_credentials()
     async with SessionStore(session_path) as store:
@@ -450,7 +450,7 @@ async def test_phone_pairing_rejects_a_failure(session_path: Path) -> None:
 
 
 async def test_phone_pairing_acknowledges_server_requests(session_path: Path) -> None:
-    from wapy.crypto.primitives import generate_keypair
+    from aiowapy.crypto.primitives import generate_keypair
 
     credentials = generate_credentials()
     async with SessionStore(session_path) as store:
@@ -482,7 +482,7 @@ async def test_phone_pairing_acknowledges_server_requests(session_path: Path) ->
 
 
 def test_phone_jid_keeps_the_leading_plus() -> None:
-    from wapy.session import phone_jid
+    from aiowapy.session import phone_jid
 
     assert phone_jid("+79 646 669 102") == "+79646669102@s.whatsapp.net"
     assert phone_jid("79646669102") == "+79646669102@s.whatsapp.net"

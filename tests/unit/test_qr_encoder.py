@@ -9,7 +9,7 @@ from qrcode.constants import (
     ERROR_CORRECT_Q,
 )
 
-from wapy.qr.encoder import (
+from aiowapy.qr.encoder import (
     LEVELS,
     QrError,
     _apply_mask,
@@ -78,7 +78,7 @@ def test_matrix_matches_reference_at_fixed_mask(level: str, payload: bytes, mask
 
 @pytest.mark.parametrize("level", LEVELS)
 def test_chosen_mask_is_the_lowest_penalty(level: str) -> None:
-    from wapy.qr.encoder import _penalty
+    from aiowapy.qr.encoder import _penalty
 
     payload = b"chosen mask"
     result = encode(payload, level=level)

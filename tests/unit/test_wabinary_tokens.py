@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from wapy.protocol.wabinary import tokens
+from aiowapy.protocol.wabinary import tokens
 
 
 def test_tag_values_match_reference() -> None:

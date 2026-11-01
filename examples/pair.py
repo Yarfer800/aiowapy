@@ -14,10 +14,10 @@ import os
 import sys
 from pathlib import Path
 
-from wapy.pairing import PairingQr
-from wapy.protocol.transport import WhatsAppTransport
-from wapy.qr.render import render_ascii
-from wapy.session import ClientSession
+from aiowapy.pairing import PairingQr
+from aiowapy.protocol.transport import WhatsAppTransport
+from aiowapy.qr.render import render_ascii
+from aiowapy.session import ClientSession
 
 S_WHATSAPP_NET = "s.whatsapp.net"
 
@@ -44,7 +44,7 @@ def show_qr(item: PairingQr) -> None:
 
 
 async def main() -> int:
-    session_path = Path(sys.argv[1] if len(sys.argv) > 1 else "wapy.session")
+    session_path = Path(sys.argv[1] if len(sys.argv) > 1 else "aiowapy.session")
     proxy = os.environ.get("WAPY_PROXY") or None
     platform = os.environ.get("WAPY_PLATFORM", "chrome")
 

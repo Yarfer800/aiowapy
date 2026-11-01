@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from wapy.creds import (
+from aiowapy.creds import (
     ADV_SECRET_LEN,
     REGISTRATION_ID_MAX,
     CredentialsError,
@@ -12,7 +12,7 @@ from wapy.creds import (
     generate_credentials,
     signal_public_key,
 )
-from wapy.crypto.xeddsa import verify
+from aiowapy.crypto.xeddsa import verify
 
 
 def test_generate_produces_verifiable_material() -> None:

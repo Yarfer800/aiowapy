@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from wapy.events import MessageEvent, ReceiptEvent
-from wapy.router import F, Router
+from aiowapy.events import MessageEvent, ReceiptEvent
+from aiowapy.router import F, Router
 
 
 def message(text: str | None = None, **kwargs: object) -> MessageEvent:
@@ -116,7 +116,7 @@ async def test_failing_handler_does_not_stop_the_rest() -> None:
 
 
 async def test_media_filter() -> None:
-    from wapy.protocol.media import MediaInfo
+    from aiowapy.protocol.media import MediaInfo
 
     router = Router()
     seen: list[str] = []

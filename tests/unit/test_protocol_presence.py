@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.errors import WapyError
-from wapy.protocol.presence import (
+from aiowapy.errors import WapyError
+from aiowapy.protocol.presence import (
     CHAT_COMPOSING,
     CHAT_PAUSED,
     PRESENCE_AVAILABLE,
@@ -15,7 +15,7 @@ from wapy.protocol.presence import (
     parse_chat_state,
     parse_presence,
 )
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 
 def test_available_presence_carries_the_push_name() -> None:

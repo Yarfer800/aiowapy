@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.crypto.media import (
+from aiowapy.crypto.media import (
     MEDIA_MAC_LEN,
     MediaCryptoError,
     decrypt_media,

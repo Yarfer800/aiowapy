@@ -4,9 +4,9 @@ import asyncio
 
 import pytest
 
-from wapy.protocol.stream import NodeStream, StreamError, child, children
-from wapy.protocol.transport import TransportError
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.stream import NodeStream, StreamError, child, children
+from aiowapy.protocol.transport import TransportError
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 
 class FakeTransport:

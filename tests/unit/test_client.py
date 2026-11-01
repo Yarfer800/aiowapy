@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from wapy.client import ClientError, WhatsAppClient
-from wapy.creds import DeviceCredentials, generate_credentials
-from wapy.crypto.primitives import KeyPair, generate_keypair
-from wapy.crypto.session import encrypt as signal_encrypt
-from wapy.crypto.session import initiator_session, prekey_message
-from wapy.crypto.xeddsa import sign
-from wapy.events import ConnectedEvent, DisconnectedEvent, MessageEvent, ReceiptEvent
-from wapy.protocol.messages import encode_text
-from wapy.protocol.prekeys import pack_key_pair
-from wapy.protocol.stream import child
-from wapy.protocol.wabinary import Node, decode_node, encode_node
-from wapy.store import SessionStore
+from aiowapy.client import Client, ClientError
+from aiowapy.creds import DeviceCredentials, generate_credentials
+from aiowapy.crypto.primitives import KeyPair, generate_keypair
+from aiowapy.crypto.session import encrypt as signal_encrypt
+from aiowapy.crypto.session import initiator_session, prekey_message
+from aiowapy.crypto.xeddsa import sign
+from aiowapy.events import ConnectedEvent, DisconnectedEvent, MessageEvent, ReceiptEvent
+from aiowapy.protocol.messages import encode_text
+from aiowapy.protocol.prekeys import pack_key_pair
+from aiowapy.protocol.stream import child
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.store import SessionStore
 
 ME = "491111111111:1@s.whatsapp.net"
 
@@ -272,7 +272,7 @@ def incoming_text(
 
 async def connected_client(
     tmp_path: Path, *, auto_receipts: bool = True
-) -> tuple[WhatsAppClient, FakeServer, Credentials]:
+) -> tuple[Client, FakeServer, Credentials]:
     credentials = generate_credentials()
     server = FakeServer()
     path = tmp_path / "bot.session"
@@ -283,7 +283,7 @@ async def connected_client(
     await store.add_prekeys([(5, pack_key_pair(one_time.private, one_time.public))])
     await store.close()
 
-    client = WhatsAppClient(
+    client = Client(
         path,
         transport_factory=lambda: server,
         auto_receipts=auto_receipts,
@@ -561,7 +561,7 @@ async def test_connected_and_disconnected_events(tmp_path: Path) -> None:
     server = FakeServer()
     path = tmp_path / "bot.session"
     await seeded_store(path, credentials)
-    client = WhatsAppClient(path, transport_factory=lambda: server, reconnect=False)
+    client = Client(path, transport_factory=lambda: server, reconnect=False)
     events: list[object] = []
     client.router.on(ConnectedEvent)(events.append)
     client.router.on(DisconnectedEvent)(events.append)
@@ -578,7 +578,7 @@ async def test_connected_and_disconnected_events(tmp_path: Path) -> None:
 
 
 async def test_send_text_without_connection_fails(tmp_path: Path) -> None:
-    client = WhatsAppClient(tmp_path / "bot.session")
+    client = Client(tmp_path / "bot.session")
     with pytest.raises(ClientError):
         await client.send_text(PEER, "hi")
 
@@ -607,8 +607,8 @@ async def test_send_text_to_a_group_uses_sender_keys(tmp_path: Path) -> None:
 
 
 async def test_incoming_group_message_is_decrypted(tmp_path: Path) -> None:
-    from wapy.crypto.sender_key import SenderKeyState, distribution_message, encrypt
-    from wapy.protocol.messages import encode_sender_key_distribution, group_enc_node
+    from aiowapy.crypto.sender_key import SenderKeyState, distribution_message, encrypt
+    from aiowapy.protocol.messages import encode_sender_key_distribution, group_enc_node
 
     client, server, credentials = await connected_client(tmp_path)
     received: asyncio.Queue[MessageEvent] = asyncio.Queue()
@@ -668,7 +668,7 @@ async def test_send_image_uploads_and_sends(tmp_path: Path) -> None:
     media = FakeMediaTransport()
     path = tmp_path / "bot.session"
     await seeded_store(path, credentials)
-    client = WhatsAppClient(path, transport_factory=lambda: server, media_transport=media)
+    client = Client(path, transport_factory=lambda: server, media_transport=media)
     server.push(Node(tag="success", attrs={"jid": ME}))
     await asyncio.wait_for(client.connect(), timeout=5)
     try:
@@ -687,15 +687,15 @@ async def test_send_image_uploads_and_sends(tmp_path: Path) -> None:
 async def test_download_media_decrypts(tmp_path: Path) -> None:
     import hashlib
 
-    from wapy.crypto.media import encrypt_media
-    from wapy.protocol.media import MEDIA_IMAGE, MediaInfo
+    from aiowapy.crypto.media import encrypt_media
+    from aiowapy.protocol.media import MEDIA_IMAGE, MediaInfo
 
     credentials = generate_credentials()
     server = FakeServer()
     media = FakeMediaTransport()
     path = tmp_path / "bot.session"
     await seeded_store(path, credentials)
-    client = WhatsAppClient(path, transport_factory=lambda: server, media_transport=media)
+    client = Client(path, transport_factory=lambda: server, media_transport=media)
     server.push(Node(tag="success", attrs={"jid": ME}))
     await asyncio.wait_for(client.connect(), timeout=5)
     try:
@@ -731,9 +731,9 @@ async def test_group_helpers_use_the_group_service(tmp_path: Path) -> None:
 
 
 async def test_app_state_keys_are_stored_and_synced(tmp_path: Path) -> None:
-    from wapy.crypto.primitives import hkdf
-    from wapy.pb import bytes_field, message_field, varint_field
-    from wapy.protocol.appstate import expand_keys
+    from aiowapy.crypto.primitives import hkdf
+    from aiowapy.pb import bytes_field, message_field, varint_field
+    from aiowapy.protocol.appstate import expand_keys
 
     client, server, credentials = await connected_client(tmp_path)
     try:
@@ -787,7 +787,7 @@ async def test_reconnect_after_a_dropped_connection(tmp_path: Path) -> None:
     server = FakeServer()
     path = tmp_path / "bot.session"
     await seeded_store(path, credentials)
-    client = WhatsAppClient(
+    client = Client(
         path,
         transport_factory=lambda: server,
         push_name="bot",
@@ -820,7 +820,7 @@ async def test_logged_out_stream_error_stops_reconnecting(tmp_path: Path) -> Non
     server = FakeServer()
     path = tmp_path / "bot.session"
     await seeded_store(path, credentials)
-    client = WhatsAppClient(
+    client = Client(
         path,
         transport_factory=lambda: server,
         reconnect_delay=0.05,
@@ -872,8 +872,8 @@ async def incoming_payload(
 
 
 async def test_incoming_reaction_is_stored_and_dispatched(tmp_path: Path) -> None:
-    from wapy.events import ReactionEvent
-    from wapy.protocol.messages import encode_reaction
+    from aiowapy.events import ReactionEvent
+    from aiowapy.protocol.messages import encode_reaction
 
     client, server, credentials = await connected_client(tmp_path)
     events: asyncio.Queue[ReactionEvent] = asyncio.Queue()
@@ -895,8 +895,8 @@ async def test_incoming_reaction_is_stored_and_dispatched(tmp_path: Path) -> Non
 
 
 async def test_incoming_edit_and_revoke_update_the_stored_message(tmp_path: Path) -> None:
-    from wapy.events import EditEvent, RevokeEvent
-    from wapy.protocol.messages import encode_edit, encode_revoke
+    from aiowapy.events import EditEvent, RevokeEvent
+    from aiowapy.protocol.messages import encode_edit, encode_revoke
 
     client, server, credentials = await connected_client(tmp_path)
     edits: asyncio.Queue[EditEvent] = asyncio.Queue()
@@ -976,13 +976,13 @@ async def test_send_reaction_edit_and_revoke(tmp_path: Path) -> None:
 
 
 async def test_reply_carries_a_quote(tmp_path: Path) -> None:
-    from wapy.protocol.messages import parse_message
+    from aiowapy.protocol.messages import parse_message
 
     client, server, _credentials = await connected_client(tmp_path)
     try:
         await client.save_message(PEER, "ORIGINAL", "question", sender_jid=PEER, timestamp=1000)
         reference = await client._quote_ref(PEER, "ORIGINAL")
-        from wapy.protocol.messages import encode_text, parse_message
+        from aiowapy.protocol.messages import encode_text, parse_message
 
         parsed = parse_message(encode_text("answer", quote=reference))
         assert parsed.text == "answer"
@@ -996,10 +996,10 @@ async def test_reply_carries_a_quote(tmp_path: Path) -> None:
 async def test_incoming_history_chunk_is_stored(tmp_path: Path) -> None:
     import gzip
 
-    from wapy.events import HistorySyncEvent
-    from wapy.pb import bytes_field, varint_field
-    from wapy.protocol.history import encode_conversation, encode_history_message
-    from wapy.protocol.messages import encode_text
+    from aiowapy.events import HistorySyncEvent
+    from aiowapy.pb import bytes_field, varint_field
+    from aiowapy.protocol.history import encode_conversation, encode_history_message
+    from aiowapy.protocol.messages import encode_text
 
     client, server, credentials = await connected_client(tmp_path)
     events: asyncio.Queue[HistorySyncEvent] = asyncio.Queue()

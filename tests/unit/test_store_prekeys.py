@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from wapy.store import SessionStore
+from aiowapy.store import SessionStore
 
 
 @pytest.fixture

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.messaging.devices import (
+from aiowapy.messaging.devices import (
     CachedDeviceResolver,
     DeviceError,
     DeviceInfo,
 )
-from wapy.messaging.messenger import MessagingError, Messenger, SendResult
-from wapy.protocol.messages import EncryptedDevice
-from wapy.protocol.wabinary import Node
+from aiowapy.messaging.messenger import MessagingError, Messenger, SendResult
+from aiowapy.protocol.messages import EncryptedDevice
+from aiowapy.protocol.wabinary import Node
 
 JID = "491234567890@s.whatsapp.net"
 
@@ -103,7 +103,7 @@ async def test_send_text_builds_one_enc_per_device() -> None:
 
 
 async def test_message_carries_the_encoded_text() -> None:
-    from wapy.protocol.messages import decode_text
+    from aiowapy.protocol.messages import decode_text
 
     messenger, sender, _ = build([make_device("1:1@s.whatsapp.net")])
     await messenger.send_text(JID, "hello")
@@ -160,7 +160,7 @@ async def test_no_devices_raises() -> None:
 
 
 async def test_empty_text_is_rejected_before_any_network_call() -> None:
-    from wapy.protocol.messages import MessageError
+    from aiowapy.protocol.messages import MessageError
 
     messenger, sender, _ = build([make_device("1:1@s.whatsapp.net")])
     with pytest.raises(MessageError):

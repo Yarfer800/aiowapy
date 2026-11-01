@@ -5,16 +5,16 @@ import zlib
 
 import pytest
 
-from wapy.creds import generate_credentials
-from wapy.pairing import (
+from aiowapy.creds import generate_credentials
+from aiowapy.pairing import (
     PAIRING_URL,
     PLATFORM_IDS,
     PairingQrError,
     build_pairing_payload,
     pairing_qr,
 )
-from wapy.qr.encoder import encode
-from wapy.qr.render import render_ascii, render_png
+from aiowapy.qr.encoder import encode
+from aiowapy.qr.render import render_ascii, render_png
 
 NOISE_KEY = bytes(range(1, 33))
 IDENTITY_KEY = bytes(range(33, 65))

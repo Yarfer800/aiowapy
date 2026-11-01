@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from wapy.pb import parse_fields
-from wapy.protocol.messages import (
+from aiowapy.pb import parse_fields
+from aiowapy.protocol.messages import (
     QuoteRef,
     encode_edit,
     encode_reaction,
@@ -77,7 +77,7 @@ def test_long_text_with_quote_still_parses() -> None:
 
 
 def test_unknown_protocol_message_is_ignored() -> None:
-    from wapy.pb import bytes_field, message_field, varint_field_explicit
+    from aiowapy.pb import bytes_field, message_field, varint_field_explicit
 
     payload = bytes_field(12, bytes_field(1, bytes_field(3, b"ID")) + varint_field_explicit(2, 9))
     assert parse_message(payload).protocol is None

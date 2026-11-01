@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from wapy.crypto.media import decrypt_media, encrypt_media
-from wapy.messaging.media import MediaStorage, MediaTransferError
-from wapy.protocol.media import (
+from aiowapy.crypto.media import decrypt_media, encrypt_media
+from aiowapy.messaging.media import MediaStorage, MediaTransferError
+from aiowapy.protocol.media import (
     MEDIA_DOCUMENT,
     MEDIA_IMAGE,
     MediaConnection,
@@ -20,8 +20,8 @@ from wapy.protocol.media import (
     upload_path,
     upload_url,
 )
-from wapy.protocol.messages import encode_media, parse_message
-from wapy.protocol.wabinary import Node
+from aiowapy.protocol.messages import encode_media, parse_message
+from aiowapy.protocol.wabinary import Node
 
 
 def media_conn_node() -> Node:

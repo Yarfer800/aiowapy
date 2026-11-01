@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.pb import ProtobufError, parse_fields
-from wapy.protocol.handshake import (
+from aiowapy.pb import ProtobufError, parse_fields
+from aiowapy.protocol.handshake import (
     ClientFinish,
     ClientHello,
     HandshakeError,

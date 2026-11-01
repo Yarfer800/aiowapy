@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.creds import generate_credentials
-from wapy.crypto.primitives import generate_keypair
-from wapy.crypto.session import decrypt, responder_session, signal_key
-from wapy.crypto.signal_proto import decode_prekey
-from wapy.messaging.devices import DeviceError, DeviceInfo
-from wapy.messaging.real import (
+from aiowapy.creds import generate_credentials
+from aiowapy.crypto.primitives import generate_keypair
+from aiowapy.crypto.session import decrypt, responder_session, signal_key
+from aiowapy.crypto.signal_proto import decode_prekey
+from aiowapy.messaging.devices import DeviceError, DeviceInfo
+from aiowapy.messaging.real import (
     StoreSignalSessions,
     StreamNodeSender,
     UsyncDeviceFetcher,
 )
-from wapy.protocol.bundles import build_bundle_query, parse_bundles
-from wapy.protocol.usync import UsyncError, build_device_query, parse_device_jids
-from wapy.protocol.wabinary import Node, decode_node, encode_node
-from wapy.store import SessionStore
+from aiowapy.protocol.bundles import build_bundle_query, parse_bundles
+from aiowapy.protocol.usync import UsyncError, build_device_query, parse_device_jids
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.store import SessionStore
 
 JID = "491234567890@s.whatsapp.net"
 DEVICE = "491234567890:2@s.whatsapp.net"
@@ -336,9 +336,9 @@ def test_message_node_roundtrips_before_send() -> None:
 
 async def _pair_with_peer(tmp_path, *, prekey_id: int = 5):
     """Set up our credentials plus one stored one-time prekey, and a peer session."""
-    from wapy.crypto.primitives import generate_keypair
-    from wapy.crypto.session import initiator_session
-    from wapy.protocol.prekeys import pack_key_pair
+    from aiowapy.crypto.primitives import generate_keypair
+    from aiowapy.crypto.session import initiator_session
+    from aiowapy.protocol.prekeys import pack_key_pair
 
     ours = generate_credentials()
     one_time = generate_keypair()
@@ -360,9 +360,9 @@ async def _pair_with_peer(tmp_path, *, prekey_id: int = 5):
 
 
 async def test_decrypt_prekey_message_and_then_normal_one(tmp_path) -> None:
-    from wapy.crypto.session import encrypt as signal_encrypt
-    from wapy.crypto.session import prekey_message
-    from wapy.messaging.real import StoreSignalSessionsWithDecrypt
+    from aiowapy.crypto.session import encrypt as signal_encrypt
+    from aiowapy.crypto.session import prekey_message
+    from aiowapy.messaging.real import StoreSignalSessionsWithDecrypt
 
     ours, store, peer_identity, peer_state = await _pair_with_peer(tmp_path)
     try:
@@ -378,9 +378,9 @@ async def test_decrypt_prekey_message_and_then_normal_one(tmp_path) -> None:
 
 
 async def test_decrypt_consumes_the_one_time_prekey(tmp_path) -> None:
-    from wapy.crypto.session import encrypt as signal_encrypt
-    from wapy.crypto.session import prekey_message
-    from wapy.messaging.real import StoreSignalSessionsWithDecrypt
+    from aiowapy.crypto.session import encrypt as signal_encrypt
+    from aiowapy.crypto.session import prekey_message
+    from aiowapy.messaging.real import StoreSignalSessionsWithDecrypt
 
     ours, store, _peer_identity, peer_state = await _pair_with_peer(tmp_path)
     try:
@@ -393,7 +393,7 @@ async def test_decrypt_consumes_the_one_time_prekey(tmp_path) -> None:
 
 
 async def test_decrypt_without_session_fails(tmp_path) -> None:
-    from wapy.messaging.real import SessionSendError, StoreSignalSessionsWithDecrypt
+    from aiowapy.messaging.real import SessionSendError, StoreSignalSessionsWithDecrypt
 
     ours = generate_credentials()
     store = SessionStore(tmp_path / "bot.session")
@@ -420,8 +420,8 @@ class FakeSessionsForReceive:
 
 
 async def test_receiver_extracts_text() -> None:
-    from wapy.messaging.receiving import MessageReceiver
-    from wapy.protocol.messages import EncryptedDevice, build_message_node, encode_text
+    from aiowapy.messaging.receiving import MessageReceiver
+    from aiowapy.protocol.messages import EncryptedDevice, build_message_node, encode_text
 
     node = build_message_node(
         "me@s.whatsapp.net",
@@ -441,8 +441,8 @@ async def test_receiver_extracts_text() -> None:
 
 
 async def test_receiver_reports_devices_when_all_fail() -> None:
-    from wapy.messaging.receiving import DecryptError, MessageReceiver
-    from wapy.protocol.messages import EncryptedDevice, build_message_node
+    from aiowapy.messaging.receiving import DecryptError, MessageReceiver
+    from aiowapy.protocol.messages import EncryptedDevice, build_message_node
 
     node = build_message_node(
         "me@s.whatsapp.net",

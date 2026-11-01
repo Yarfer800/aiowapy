@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.creds import DeviceCredentials, generate_credentials
-from wapy.protocol.prekeys import (
+from aiowapy.creds import DeviceCredentials, generate_credentials
+from aiowapy.protocol.prekeys import (
     PreKeyError,
     build_count_query,
     build_upload_node,
@@ -14,8 +14,8 @@ from wapy.protocol.prekeys import (
     signed_prekey_node,
     unpack_public,
 )
-from wapy.protocol.stream import child
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.stream import child
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 
 @pytest.fixture

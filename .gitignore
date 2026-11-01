@@ -40,8 +40,11 @@ keys.log
 /tools/capture/
 
 # Local notes and design docs (never published)
-/docs/
+/notes/
 
 # Local scratch
 /tmp/
 scratch/
+
+# Built docs
+/site/

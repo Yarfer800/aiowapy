@@ -1,4 +1,10 @@
-# wapy
+# aiowapy
+
+[![CI](https://github.com/Yarfer800/wapy/actions/workflows/ci.yml/badge.svg)](https://github.com/Yarfer800/wapy/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-yarfer800.github.io%2Fwapy-green)](https://yarfer800.github.io/wapy/)
+[![PyPI](https://img.shields.io/pypi/v/aiowapy.svg)](https://pypi.org/project/aiowapy/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/aiowapy/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 An asynchronous WhatsApp Multi-Device client for Python: a native implementation of the
 protocol (Noise + Signal + WABinary), no official Cloud API involved.
@@ -9,20 +15,29 @@ protocol (Noise + Signal + WABinary), no official Cloud API involved.
 ## Installation
 
 ```bash
-pip install wapy
+pip install aiowapy
 ```
+
+The distribution is called **aiowapy**, the import is **`aiowapy`**:
+
+```python
+from aiowapy import Client
+```
+
+Full documentation: **https://yarfer800.github.io/wapy/**
 
 ## Quick start
 
 ```python
 import asyncio
 
-from wapy.client import WhatsAppClient
-from wapy.events import MessageEvent
-from wapy.router import F
+from aiowapy import Client
+from aiowapy.events import MessageEvent
+from aiowapy.router import F
+
 
 async def main() -> None:
-    async with WhatsAppClient("bot.session") as client:
+    async with Client("bot.session") as client:
         print("connected as", client.info.jid)
 
         @client.router.message(F.text.startswith("/ping"))
@@ -30,6 +45,7 @@ async def main() -> None:
             await client.send_text(event.chat_jid, "pong", quote=event.message_id)
 
         await client.run()
+
 
 asyncio.run(main())
 ```
@@ -44,15 +60,14 @@ session file keeps the keys and later runs only log in.
 app state, **chats, contacts and messages**.
 
 ```python
-history = await client.get_chat_history(chat_jid, limit=50)   # newest first
-older   = await client.get_chat_history(chat_jid, limit=50,
-                                        before_timestamp=history[-1].timestamp)
+history = await client.get_chat_history(chat_jid, limit=50)  # newest first
+older = await client.get_chat_history(chat_jid, limit=50, before_timestamp=history[-1].timestamp)
 
-chats  = await client.get_chats()        # conversations, newest first
-users  = await client.get_users()        # contacts we have seen
-chat   = await client.get_chat(jid)      # Peer: .name, .push_name, .contact_name
+chats = await client.get_chats()  # conversations, newest first
+users = await client.get_users()  # contacts we have seen
+chat = await client.get_chat(jid)  # Peer: .name, .push_name, .contact_name
 await client.set_contact_name(jid, "Mom")
-await client.download_stored(history[0]) # attachment of a stored message
+await client.download_stored(history[0])  # attachment of a stored message
 ```
 
 Messages arrive from three places: live traffic, `history sync` chunks sent by the
@@ -70,7 +85,7 @@ await client.send_audio(jid, voice_bytes, voice_note=True)
 await client.send_reaction(jid, message_id, "\U0001f44d")
 await client.edit_message(jid, message_id, "fixed text")
 await client.revoke_message(jid, message_id)
-await client.send_text("120363000000000001@g.us", "hello group")   # groups just work
+await client.send_text("120363000000000001@g.us", "hello group")  # groups just work
 ```
 
 `send_*` returns `SendResult(message_id, sent, failed, acked)`: a message counts as
@@ -80,11 +95,13 @@ raised.
 ## Receiving
 
 ```python
-from wapy.router import F
+from aiowapy.router import F
+
 
 @client.router.message(F.text.contains("invoice") & F.chat("1203630@g.us"))
 async def handle(event: MessageEvent) -> None:
     await client.mark_read(event)
+
 
 @client.router.message(F.media("image"))
 async def on_image(event: MessageEvent) -> None:
@@ -106,7 +123,7 @@ await client.send_typing(jid, composing=True)
 ## Groups
 
 ```python
-info  = await client.group_info(group_jid)
+info = await client.group_info(group_jid)
 group = await client.create_group("Team", [jid1, jid2])
 await client.update_group_participants(group, "add", [jid3])
 await client.leave_group(group)
@@ -131,20 +148,20 @@ await client.mark_chat_read(jid, True)
 
 | Layer | Module |
 |---|---|
-| Noise handshake, framing | `wapy.protocol.noise`, `wapy.protocol.transport` |
-| Pairing (QR and code) | `wapy.protocol.pairing`, `wapy.protocol.pairing_code` |
-| WABinary codec | `wapy.protocol.wabinary` |
-| Signal (X3DH, double ratchet) | `wapy.crypto.session` |
-| Sending: text, media, groups | `wapy.messaging` |
-| Receiving and decryption | `wapy.messaging.receiving` |
-| Receipts, retry requests | `wapy.protocol.receipts`, `wapy.client` |
-| Presence and typing | `wapy.protocol.presence` |
-| Groups (sender keys) | `wapy.messaging.groups` |
-| Media upload and download | `wapy.messaging.media` |
-| App state sync | `wapy.messaging.appstate` |
-| History sync | `wapy.messaging.history` |
-| Chats, contacts, messages | `wapy.store` |
-| Reactions, replies, edits, revokes | `wapy.protocol.messages` |
+| Noise handshake, framing | `aiowapy.protocol.noise`, `aiowapy.protocol.transport` |
+| Pairing (QR and code) | `aiowapy.protocol.pairing`, `aiowapy.protocol.pairing_code` |
+| WABinary codec | `aiowapy.protocol.wabinary` |
+| Signal (X3DH, double ratchet) | `aiowapy.crypto.session` |
+| Sending: text, media, groups | `aiowapy.messaging` |
+| Receiving and decryption | `aiowapy.messaging.receiving` |
+| Receipts, retry requests | `aiowapy.protocol.receipts`, `aiowapy.client` |
+| Presence and typing | `aiowapy.protocol.presence` |
+| Groups (sender keys) | `aiowapy.messaging.groups` |
+| Media upload and download | `aiowapy.messaging.media` |
+| App state sync | `aiowapy.messaging.appstate` |
+| History sync | `aiowapy.messaging.history` |
+| Chats, contacts, messages | `aiowapy.store` |
+| Reactions, replies, edits, revokes | `aiowapy.protocol.messages` |
 
 Not implemented: calls, channels (newsletters), statuses, polls and buttons,
 LID-based encryption (LID mappings are stored and exposed, but sessions still start

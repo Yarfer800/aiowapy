@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.crypto.sender_key import (
+from aiowapy.crypto.sender_key import (
     SenderKeyError,
     SenderKeyState,
     decrypt,

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from wapy.crypto.signal_proto import (
+from aiowapy.crypto.signal_proto import (
     PreKeyWhisperMessage,
     SignalProtoError,
     WhisperMessage,

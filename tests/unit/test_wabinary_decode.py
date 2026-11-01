@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from wapy.protocol.wabinary.decode import DecodeError, decode_node
-from wapy.protocol.wabinary.encode import encode_node
-from wapy.protocol.wabinary.node import Node
+from aiowapy.protocol.wabinary.decode import DecodeError, decode_node
+from aiowapy.protocol.wabinary.encode import encode_node
+from aiowapy.protocol.wabinary.node import Node
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "wabinary" / "nodes.json"
 

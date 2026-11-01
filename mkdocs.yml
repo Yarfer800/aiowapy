@@ -1,0 +1,80 @@
+site_name: aiowapy
+site_description: Async WhatsApp Multi-Device client for Python, implemented from the protocol up.
+site_url: https://yarfer800.github.io/wapy/
+repo_url: https://github.com/Yarfer800/wapy
+repo_name: Yarfer800/wapy
+edit_uri: edit/main/docs/
+copyright: MIT licensed
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - content.code.copy
+    - content.action.edit
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: green
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: green
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+            separate_signature: true
+            merge_init_into_class: true
+            show_signature_annotations: true
+            unwrap_annotated: true
+
+nav:
+  - Home: index.md
+  - Quick start: quickstart.md
+  - Sending: messages.md
+  - Media: media.md
+  - Groups: groups.md
+  - Receiving: receiving.md
+  - Storage and history: storage.md
+  - Presence: presence.md
+  - App state: appstate.md
+  - Protocol and limitations: protocol.md
+  - API reference:
+      - Client: api/client.md
+      - Router and filters: api/router.md
+      - Events: api/events.md
+      - Models: api/models.md
+      - Store: api/store.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details

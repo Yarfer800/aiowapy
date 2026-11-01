@@ -12,7 +12,7 @@ from __future__ import annotations
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 # No '@': a string containing '@' is treated as a JID, and an invalid JID does not roundtrip.
 TEXT = st.text(

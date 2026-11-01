@@ -3,13 +3,29 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "wapy"
+name = "aiowapy"
 version = "0.1.0"
-description = "Async WhatsApp Multi-Device protocol client for Python"
+description = "Async WhatsApp Multi-Device client: Noise, Signal and WABinary implemented natively in Python"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Yarfer", email = "yarfer@rs.me" }]
+keywords = ["whatsapp", "asyncio", "async", "messaging", "bot", "signal", "noise", "whatsapp-web"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
 dependencies = [
     "cryptography>=42",
     "aiosqlite>=0.20",
@@ -17,7 +33,18 @@ dependencies = [
     "protobuf>=5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Yarfer800/wapy"
+Documentation = "https://yarfer800.github.io/wapy/"
+Repository = "https://github.com/Yarfer800/wapy"
+Issues = "https://github.com/Yarfer800/wapy/issues"
+Changelog = "https://github.com/Yarfer800/wapy/blob/main/CHANGELOG.md"
+
 [dependency-groups]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -28,7 +55,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/wapy"]
+packages = ["src/aiowapy"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

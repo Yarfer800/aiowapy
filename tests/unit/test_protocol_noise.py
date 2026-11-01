@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.crypto.primitives import (
+from aiowapy.crypto.primitives import (
     CryptoError,
     KeyPair,
     aes_gcm_decrypt,
@@ -20,10 +20,10 @@ from wapy.crypto.primitives import (
     hkdf,
     sha256,
 )
-from wapy.crypto.xeddsa import sign
-from wapy.pb import bytes_field, message_field, varint_field
-from wapy.protocol.handshake import HandshakeMessage, ServerHello, decode, encode
-from wapy.protocol.noise import (
+from aiowapy.crypto.xeddsa import sign
+from aiowapy.pb import bytes_field, message_field, varint_field
+from aiowapy.protocol.handshake import HandshakeMessage, ServerHello, decode, encode
+from aiowapy.protocol.noise import (
     INTRO_MAGIC,
     PROTOCOL_NAME,
     NoiseError,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from wapy.store import SessionStore
+from aiowapy.store import SessionStore
 
 CHAT = "491234567890@s.whatsapp.net"
 GROUP = "120363000000000001@g.us"
@@ -89,7 +89,7 @@ async def test_message_saved_twice_is_updated(store: SessionStore) -> None:
 async def test_media_roundtrip_through_json(store: SessionStore) -> None:
     import json
 
-    from wapy.models import MEDIA_IMAGE, MediaInfo, media_from_dict, media_to_dict
+    from aiowapy.models import MEDIA_IMAGE, MediaInfo, media_from_dict, media_to_dict
 
     info = MediaInfo(
         media_type=MEDIA_IMAGE,

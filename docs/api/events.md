@@ -1,0 +1,3 @@
+# Events
+
+::: aiowapy.events

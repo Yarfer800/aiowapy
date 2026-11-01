@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.pb import parse_fields
-from wapy.protocol.messages import (
+from aiowapy.pb import parse_fields
+from aiowapy.protocol.messages import (
     EncryptedDevice,
     MessageError,
     build_message_node,
@@ -14,7 +14,7 @@ from wapy.protocol.messages import (
     encode_text,
     parse_incoming,
 )
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 
 def test_short_text_uses_conversation_field() -> None:
@@ -122,7 +122,7 @@ def test_media_type_lands_on_the_enc_nodes() -> None:
 
 
 def test_incoming_reads_enc_both_inline_and_in_participants() -> None:
-    from wapy.protocol.messages import parse_incoming
+    from aiowapy.protocol.messages import parse_incoming
 
     inline = Node(
         tag="message",
@@ -150,8 +150,8 @@ def test_incoming_reads_enc_both_inline_and_in_participants() -> None:
 
 
 def test_device_sent_message_wraps_the_payload() -> None:
-    from wapy.pb import parse_fields
-    from wapy.protocol.messages import encode_device_sent
+    from aiowapy.pb import parse_fields
+    from aiowapy.protocol.messages import encode_device_sent
 
     wrapped = encode_device_sent("1@s.whatsapp.net", b"\x0a\x02hi")
     outer = parse_fields(wrapped)

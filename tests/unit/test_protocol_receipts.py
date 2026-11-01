@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.creds import generate_credentials
-from wapy.protocol.receipts import (
+from aiowapy.creds import generate_credentials
+from aiowapy.protocol.receipts import (
     MAX_RETRY_COUNT,
     RECEIPT_DELIVERY,
     RECEIPT_READ,
@@ -13,8 +13,8 @@ from wapy.protocol.receipts import (
     build_receipt,
     build_retry_receipt,
 )
-from wapy.protocol.stream import child
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.stream import child
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 INCOMING = Node(
     tag="message",

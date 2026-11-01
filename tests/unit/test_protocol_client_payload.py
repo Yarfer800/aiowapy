@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wapy.creds import DeviceCredentials, SignedPreKey
-from wapy.crypto.primitives import KeyPair
-from wapy.pb import first_bytes, first_int, parse_fields
-from wapy.protocol.client_payload import (
+from aiowapy.creds import DeviceCredentials, SignedPreKey
+from aiowapy.crypto.primitives import KeyPair
+from aiowapy.pb import first_bytes, first_int, parse_fields
+from aiowapy.protocol.client_payload import (
     PLATFORM_WEB,
     build_login_payload,
     build_registration_payload,

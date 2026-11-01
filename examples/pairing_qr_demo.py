@@ -13,9 +13,9 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-from wapy.creds import generate_credentials
-from wapy.pairing import PairingQrSource
-from wapy.qr.render import render_ascii, render_png
+from aiowapy.creds import generate_credentials
+from aiowapy.pairing import PairingQrSource
+from aiowapy.qr.render import render_ascii, render_png
 
 OUTPUT_DIR = Path("/tmp/wapy-pairing")
 

@@ -5,11 +5,11 @@ from dataclasses import replace
 
 import pytest
 
-from wapy.creds import DeviceCredentials, SignedPreKey
-from wapy.crypto.primitives import KeyPair, generate_keypair, hmac_sha256
-from wapy.crypto.xeddsa import sign, verify
-from wapy.pb import bytes_field, varint_field
-from wapy.protocol.pairing import (
+from aiowapy.creds import DeviceCredentials, SignedPreKey
+from aiowapy.crypto.primitives import KeyPair, generate_keypair, hmac_sha256
+from aiowapy.crypto.xeddsa import sign, verify
+from aiowapy.pb import bytes_field, varint_field
+from aiowapy.protocol.pairing import (
     ACCOUNT_SIG_PREFIX,
     DEVICE_SIG_PREFIX,
     PairingError,
@@ -18,7 +18,7 @@ from wapy.protocol.pairing import (
     parse_pair_success,
     verify_pair_success,
 )
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 
 def make_credentials(account_key: KeyPair) -> DeviceCredentials:

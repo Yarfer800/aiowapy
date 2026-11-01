@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from wapy.store import SessionStore
+from aiowapy.store import SessionStore
 
 ALICE = "491111111111.0:0@s.whatsapp.net"
 

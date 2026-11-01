@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from wapy import WapyError
-from wapy.errors import StoreError
-from wapy.store import SessionStore
+from aiowapy import WapyError
+from aiowapy.errors import StoreError
+from aiowapy.store import SessionStore
 
 
 async def test_load_creds_returns_none_when_empty(tmp_path: Path) -> None:

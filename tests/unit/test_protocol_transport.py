@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.protocol.noise import INTRO_MAGIC
-from wapy.protocol.transport import (
+from aiowapy.protocol.noise import INTRO_MAGIC
+from aiowapy.protocol.transport import (
     FrameParser,
     TransportError,
     build_intro_header,

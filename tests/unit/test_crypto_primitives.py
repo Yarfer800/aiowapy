@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.crypto.primitives import (
+from aiowapy.crypto.primitives import (
     CryptoError,
     KeyPair,
     aes_cbc_decrypt,

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.crypto.primitives import generate_keypair
-from wapy.crypto.session import (
+from aiowapy.crypto.primitives import generate_keypair
+from aiowapy.crypto.session import (
     MAX_SKIP,
     SessionError,
     decrypt,

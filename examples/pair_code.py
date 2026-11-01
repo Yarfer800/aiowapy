@@ -13,9 +13,9 @@ import os
 import sys
 from pathlib import Path
 
-from wapy.protocol.pairing_code import generate_pairing_code
-from wapy.protocol.transport import WhatsAppTransport
-from wapy.session import ClientSession
+from aiowapy.protocol.pairing_code import generate_pairing_code
+from aiowapy.protocol.transport import WhatsAppTransport
+from aiowapy.session import ClientSession
 
 
 async def main() -> int:
@@ -23,7 +23,7 @@ async def main() -> int:
         print("usage: pair_code.py <phone_number> [session_path]")
         return 2
     phone = sys.argv[1]
-    session_path = Path(sys.argv[2] if len(sys.argv) > 2 else "wapy.session")
+    session_path = Path(sys.argv[2] if len(sys.argv) > 2 else "aiowapy.session")
     proxy = os.environ.get("WAPY_PROXY") or None
 
     code = generate_pairing_code()

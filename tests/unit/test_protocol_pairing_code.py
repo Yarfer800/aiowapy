@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.creds import DeviceCredentials, generate_credentials
-from wapy.crypto.primitives import aes_ctr, dh, hkdf, pbkdf2_sha256
-from wapy.protocol.pairing_code import (
+from aiowapy.creds import DeviceCredentials, generate_credentials
+from aiowapy.crypto.primitives import aes_ctr, dh, hkdf, pbkdf2_sha256
+from aiowapy.protocol.pairing_code import (
     ADV_SECRET_INFO,
     CROCKFORD_ALPHABET,
     KEY_BUNDLE_INFO,
@@ -22,8 +22,8 @@ from wapy.protocol.pairing_code import (
     validate_pairing_code,
     wrap_ephemeral_public,
 )
-from wapy.protocol.stream import child
-from wapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.protocol.stream import child
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
 
 CODE = "ABCD1234"
 SALT = bytes(range(32))
@@ -159,7 +159,7 @@ def test_parse_companion_finish_rejects_other_stages() -> None:
 def test_companion_finish_produces_a_decryptable_bundle() -> None:
     credentials = generate_credentials()
     # The server side: its own ephemeral pair and the primary identity key.
-    from wapy.crypto.primitives import generate_keypair
+    from aiowapy.crypto.primitives import generate_keypair
 
     server_ephemeral = generate_keypair()
     primary_identity = generate_keypair()
@@ -202,7 +202,7 @@ def test_companion_finish_produces_a_decryptable_bundle() -> None:
 
 def test_companion_finish_node_encodes() -> None:
     credentials = generate_credentials()
-    from wapy.crypto.primitives import generate_keypair
+    from aiowapy.crypto.primitives import generate_keypair
 
     server_ephemeral = generate_keypair()
     primary_identity = generate_keypair()

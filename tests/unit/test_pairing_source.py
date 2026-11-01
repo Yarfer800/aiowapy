@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from wapy.creds import generate_credentials
-from wapy.pairing import (
+from aiowapy.creds import generate_credentials
+from aiowapy.pairing import (
     QR_FIRST_TTL,
     QR_NEXT_TTL,
     PairingQrError,

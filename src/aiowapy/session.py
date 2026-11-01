@@ -1,0 +1,619 @@
+"""Session orchestration: connect, pair if needed, survive the 515 restart.
+
+WhatsApp closes the connection with a `stream:error` code 515 right after a device
+is linked and expects the client to come back with a *login* payload. This module
+owns that state machine, so the QR flow and the reconnect are testable without a
+network.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import contextlib
+import secrets
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Protocol
+
+from aiowapy.creds import DeviceCredentials, generate_credentials
+from aiowapy.crypto.primitives import KeyPair, generate_keypair
+from aiowapy.errors import WapyError
+from aiowapy.pairing import PairingQr, PairingQrSource
+from aiowapy.protocol.client_payload import build_login_payload, build_registration_payload
+from aiowapy.protocol.pairing import (
+    PairSuccess,
+    build_pair_device_sign_reply,
+    encode_account_identity,
+    parse_pair_success,
+    verify_pair_success,
+)
+from aiowapy.protocol.pairing_code import (
+    CompanionFinishRequest,
+    build_companion_finish,
+    build_companion_hello,
+    has_wrapped_primary_ephemeral,
+    parse_companion_finish,
+    parse_pairing_ref,
+)
+from aiowapy.protocol.prekeys import (
+    INITIAL_PREKEY_COUNT,
+    MIN_PREKEY_COUNT,
+    build_upload_node,
+    pack_key_pair,
+    prekeys_to_upload,
+    unpack_public,
+)
+from aiowapy.protocol.stream import EncryptedTransport, child, children
+from aiowapy.protocol.wabinary import Node, decode_node, encode_node
+from aiowapy.store import SessionStore
+
+S_WHATSAPP_NET = "@s.whatsapp.net"
+DEFAULT_VERSION = (2, 3000, 1043857760)
+STREAM_ERROR_RESTART = 515
+STREAM_ERROR_LOGGED_OUT = {401, 403, 409}
+
+QR_FIRST_TTL = 60
+QR_NEXT_TTL = 20
+KEEPALIVE_INTERVAL = 30.0
+KEEPALIVE_GRACE = 5.0
+
+
+def new_message_id() -> str:
+    return secrets.token_hex(4)
+
+
+def phone_jid(phone: str) -> str:
+    """`+<country><number>@s.whatsapp.net`, as the reference client sends it.
+
+    The server rejects the digit-only form for code pairing (observed as an iq
+    error), so the leading plus is preserved.
+    """
+    cleaned = "".join(char for char in phone if char.isdigit() or char == "+")
+    if not cleaned.strip("+"):
+        raise SessionError(f"phone number has no digits: {phone!r}")
+    if not cleaned.startswith("+"):
+        cleaned = "+" + cleaned
+    return f"{cleaned}@s.whatsapp.net"
+
+
+def _reason_code(node: Node) -> int:
+    try:
+        return int(node.attrs.get("reason", "500"))
+    except (TypeError, ValueError):
+        return 500
+
+
+def unified_session_id(now_seconds: float | None = None) -> str:
+    """Session marker the reference client sends right after pairing."""
+    now = int((now_seconds if now_seconds is not None else time.time()) * 1000)
+    return str((now + 3 * 86_400_000) % 604_800_000)
+
+
+def build_unified_session_node(session_id: str) -> Node:
+    return Node(
+        tag="ib",
+        attrs={},
+        content=[Node(tag="unified_session", attrs={"id": session_id})],
+    )
+
+
+def build_ping_node(message_id: str) -> Node:
+    return Node(
+        tag="iq",
+        attrs={"id": message_id, "to": S_WHATSAPP_NET, "type": "get", "xmlns": "w:p"},
+        content=[Node(tag="ping", attrs={})],
+    )
+
+
+class SessionError(WapyError):
+    """The session could not be established."""
+
+
+class LoggedOutError(SessionError):
+    """The device was rejected by the server and cannot be reused."""
+
+
+class Transport(EncryptedTransport, Protocol):
+    async def connect(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    async def handshake(
+        self, key_pair: KeyPair | None = None, client_payload: bytes = b""
+    ) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StreamError:
+    code: int
+    text: str
+
+
+def parse_stream_error(node: Node) -> StreamError | None:
+    """Recognise a stream error given either as an attribute or as child nodes.
+
+    Observed in the wild: `<stream:error code="515"/>`, while the reference client
+    also handles `<stream:error><code>515</code><text>...</text></stream:error>`.
+    """
+    if node.tag != "stream:error":
+        return None
+    code_node = child(node, "code")
+    text_node = child(node, "text")
+    raw: object = code_node.content if code_node is not None else node.attrs.get("code")
+    if raw is None:
+        return None
+    try:
+        code = int(raw.decode() if isinstance(raw, bytes) else str(raw))
+    except (TypeError, ValueError):
+        return None
+    text: object = text_node.content if text_node is not None else node.attrs.get("text", "")
+    message = text.decode(errors="replace") if isinstance(text, bytes) else str(text)
+    return StreamError(code=code, text=message)
+
+
+@dataclass(slots=True)
+class SessionState:
+    credentials: DeviceCredentials
+    paired: bool = False
+    jid: str | None = None
+    lid: str | None = None
+
+
+class ClientSession:
+    """One session file, one logical connection, reconnect handling included."""
+
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        transport_factory: Callable[[], Transport],
+        qr_callback: Callable[[PairingQr], Awaitable[None] | None] | None = None,
+        node_observer: Callable[[Node], None] | None = None,
+        sent_observer: Callable[[Node], None] | None = None,
+        platform: str = "chrome",
+        version: tuple[int, int, int] = DEFAULT_VERSION,
+        max_attempts: int = 4,
+        store: SessionStore | None = None,
+        on_connected: Callable[[Transport, SessionState], Awaitable[None]] | None = None,
+        reauthenticate: bool = True,
+    ) -> None:
+        self._path = Path(path)
+        self._factory = transport_factory
+        self._qr_callback = qr_callback
+        self._observer = node_observer
+        self._sent_observer = sent_observer
+        self._platform = platform
+        self._version = version
+        self._max_attempts = max_attempts
+        self._store = store
+        self._on_connected = on_connected
+        self._reauthenticate = reauthenticate
+        self._last_recv = 0.0
+
+    async def run(self) -> SessionState:
+        """Connect, pair if needed, and serve until the connection ends.
+
+        With `on_connected` the caller takes over the transport once the login is
+        accepted: the hook runs the live loop and the session returns when it ends,
+        which is how `Client` reconnects without owning the pairing flow.
+        """
+        if self._store is not None:
+            return await self._run_with(self._store)
+        async with SessionStore(self._path) as store:
+            return await self._run_with(store)
+
+    async def _run_with(self, store: SessionStore) -> SessionState:
+        state = await self._load_state(store)
+        for _attempt in range(self._max_attempts):
+            outcome = await self._attempt(state, store)
+            if outcome == "restart":
+                continue
+            if outcome == "paired":
+                state.paired = True
+                continue
+            return state
+            # pragma: no cover - loop always returns or continues
+        raise SessionError(f"gave up after {self._max_attempts} attempts")
+
+    async def _load_state(self, store: SessionStore) -> SessionState:
+        raw = await store.load_creds()
+        if raw is None:
+            credentials = generate_credentials()
+            await store.save_creds(credentials.to_dict())
+            return SessionState(credentials=credentials)
+        me = raw.get("me") if isinstance(raw, dict) else None
+        credentials = DeviceCredentials.from_dict(raw)
+        jid = me.get("id") if isinstance(me, dict) else None
+        lid = me.get("lid") if isinstance(me, dict) else None
+        return SessionState(credentials=credentials, paired=jid is not None, jid=jid, lid=lid)
+
+    def _payload(self, state: SessionState) -> bytes:
+        if state.paired and state.jid:
+            return build_login_payload(state.jid, version=self._version)
+        return build_registration_payload(state.credentials, version=self._version)
+
+    async def _attempt(self, state: SessionState, store: SessionStore) -> str:
+        transport = self._factory()
+        await transport.connect()
+        # With an on_connected hook the caller owns the live connection, including
+        # its keepalive: two loops pinging one socket would fight over the reads.
+        keepalive = (
+            None
+            if self._on_connected is not None
+            else asyncio.create_task(self._keepalive_loop(transport))
+        )
+        try:
+            await transport.handshake(client_payload=self._payload(state))
+            self._last_recv = time.monotonic()
+            return await self._serve(transport, state, store)
+        finally:
+            if keepalive is not None:
+                keepalive.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await keepalive
+            await transport.close()
+
+    async def _keepalive_loop(self, transport: Transport) -> None:
+        """Node-level keepalive: WebSocket pings are disabled, so this is the alarm.
+
+        The reference client pings every 30 s and treats more than 35 s of silence
+        as a lost connection.
+        """
+        while True:
+            await asyncio.sleep(KEEPALIVE_INTERVAL)
+            if time.monotonic() - self._last_recv > KEEPALIVE_INTERVAL + KEEPALIVE_GRACE:
+                await transport.close()
+                return
+            await self._send(transport, build_ping_node(new_message_id()))
+
+    async def pair_with_phone_number(self, phone: str, code: str) -> SessionState:
+        """Link this device by typing a code on the phone instead of scanning a QR.
+
+        The code itself is produced by `generate_pairing_code()`; the caller shows
+        it to the user before awaiting this method, because the phone asks for it
+        only after the companion_hello request goes out.
+        """
+        async with SessionStore(self._path) as store:
+            state = await self._load_state(store)
+            target_jid = phone_jid(phone)
+            # A fresh pairing key per attempt, as the reference implementation does:
+            # reusing one across codes weakens the wrapping of the ephemeral key.
+            state.credentials = replace(state.credentials, pairing_ephemeral_key=generate_keypair())
+            await store.save_creds(state.credentials.to_dict())
+            transport = self._factory()
+            await transport.connect()
+            keepalive = asyncio.create_task(self._keepalive_loop(transport))
+            try:
+                await transport.handshake(
+                    client_payload=build_registration_payload(
+                        state.credentials, version=self._version
+                    )
+                )
+                self._last_recv = time.monotonic()
+                await self._send(
+                    transport,
+                    build_companion_hello(
+                        state.credentials,
+                        target_jid,
+                        code,
+                        new_message_id(),
+                        salt=secrets.token_bytes(32),
+                        iv=secrets.token_bytes(16),
+                    ),
+                )
+                pairing_ref = await self._await_pairing_ref(transport)
+                request = await self._await_companion_finish(transport, pairing_ref)
+                finish_node, adv_secret = build_companion_finish(
+                    state.credentials,
+                    request,
+                    code,
+                    target_jid,
+                    new_message_id(),
+                    random=secrets.token_bytes(32),
+                    link_code_salt=secrets.token_bytes(32),
+                    iv=secrets.token_bytes(12),
+                )
+                await self._send(transport, finish_node)
+                state.credentials = replace(
+                    state.credentials,
+                    adv_secret_key=base64.b64encode(adv_secret).decode("ascii"),
+                )
+                state.jid = target_jid
+                await self._await_success(transport, state, store)
+                await self._store_me(store, state)
+                await self._ensure_prekeys(transport, state, store)
+                return state
+            finally:
+                keepalive.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await keepalive
+                await transport.close()
+
+    async def _await_pairing_ref(self, transport: Transport) -> bytes | None:
+        """The first iq result after companion_hello carries the pairing ref."""
+        while True:
+            node = await self._recv_node(transport, "the server did not confirm the code")
+            ref = parse_pairing_ref(node)
+            if ref is not None:
+                return ref
+            if node.tag == "failure":
+                raise SessionError(f"pairing rejected: {node.attrs}")
+
+    async def _recv_node(self, transport: Transport, context: str) -> Node:
+        try:
+            frame = await transport.recv_encrypted()
+        except (ConnectionError, OSError) as exc:
+            raise SessionError(f"connection closed while {context}") from exc
+        except Exception as exc:
+            if type(exc).__name__.startswith("ConnectionClosed"):
+                raise SessionError(f"connection closed while {context}") from exc
+            raise
+        self._last_recv = time.monotonic()
+        node = decode_node(frame)
+        if self._observer is not None:
+            self._observer(node)
+        error = self._node_error(node)
+        if error is not None:
+            raise SessionError(f"server rejected the request: {error[0]} {error[1]}".strip())
+        await self._ack_server_request(transport, node)
+        return node
+
+    @staticmethod
+    def _node_error(node: Node) -> tuple[str, str] | None:
+        """Extract `<error code=... text=.../>` from an iq error response."""
+        if node.tag != "iq" or node.attrs.get("type") != "error":
+            return None
+        error = child(node, "error")
+        code = error.attrs.get("code", "?") if error is not None else "?"
+        text = error.attrs.get("text", "") if error is not None else ""
+        return code, text
+
+    async def _ack_server_request(self, transport: Transport, node: Node) -> None:
+        """The server sends `iq type=set` requests and expects a result for each."""
+        if node.tag != "iq" or node.attrs.get("type") != "set":
+            return
+        await self._send(
+            transport,
+            Node(
+                tag="iq",
+                attrs={
+                    "to": S_WHATSAPP_NET,
+                    "type": "result",
+                    "id": node.attrs.get("id", ""),
+                },
+            ),
+        )
+
+    async def _await_companion_finish(
+        self, transport: Transport, pairing_ref: bytes | None = None
+    ) -> CompanionFinishRequest:
+        while True:
+            node = await self._recv_node(transport, "waiting for the phone to confirm")
+            if not has_wrapped_primary_ephemeral(node):
+                # `primary_hello` and other intermediate notifications carry no key.
+                if node.tag == "failure":
+                    raise SessionError(f"pairing rejected: {node.attrs}")
+                continue
+            request = parse_companion_finish(node)
+            if pairing_ref is not None and request.ref != pairing_ref:
+                raise SessionError("pairing ref from the notification does not match")
+            return request
+
+    async def _await_success(
+        self, transport: Transport, state: SessionState, store: SessionStore
+    ) -> None:
+        while True:
+            node = await self._recv_node(transport, "waiting for pairing to complete")
+            if node.tag == "success":
+                jid = node.attrs.get("jid")
+                lid = node.attrs.get("lid")
+                if jid:
+                    state.jid = jid
+                if lid:
+                    state.lid = lid
+                return
+            if node.tag == "failure":
+                raise SessionError(f"pairing rejected: {node.attrs}")
+
+    async def _serve(self, transport: Transport, state: SessionState, store: SessionStore) -> str:
+        source = None
+        next_rotation = 0.0
+        while True:
+            timeout = None
+            if source is not None:
+                timeout = max(0.0, next_rotation - time.monotonic())
+            try:
+                frame = await asyncio.wait_for(transport.recv_encrypted(), timeout=timeout)
+            except TimeoutError:
+                # wait_for raised: it is time to rotate the QR.
+                item = source.next() if source is not None else None
+                if item is None:
+                    return "timeout"
+                await self._emit_qr(item)
+                next_rotation = time.monotonic() + item.ttl
+                continue
+            except (ConnectionError, OSError):
+                return "closed"
+            except Exception as exc:  # websockets raises its own ConnectionClosed
+                if type(exc).__name__.startswith("ConnectionClosed"):
+                    return "closed"
+                raise
+
+            self._last_recv = time.monotonic()
+            node = decode_node(frame)
+            if self._observer is not None:
+                self._observer(node)
+            await self._ack_server_request(transport, node)
+            error = parse_stream_error(node)
+            if error is not None:
+                if error.code in STREAM_ERROR_LOGGED_OUT:
+                    if state.paired and not self._reauthenticate:
+                        await self._forget_me(store, state)
+                        raise LoggedOutError(
+                            f"session rejected by the server: {error.code} {error.text}"
+                        )
+                    if state.paired:
+                        await self._forget_me(store, state)
+                        return "restart"
+                    raise SessionError(f"session rejected: {error.code} {error.text}")
+                if error.code == STREAM_ERROR_RESTART:
+                    # 515 right after pairing means the device was accepted: persist
+                    # the account so the reconnect uses a login payload.
+                    if state.jid:
+                        await self._store_me(store, state)
+                    return "restart"
+                return "close"
+
+            pair_device = child(node, "pair-device")
+            if pair_device is not None:
+                await self._ack(transport, node)
+                refs = self._read_refs(pair_device)
+                if refs:
+                    source = PairingQrSource(
+                        state.credentials,
+                        refs,
+                        platform=self._platform,
+                        first_ttl=QR_FIRST_TTL,
+                        next_ttl=QR_NEXT_TTL,
+                    )
+                    item = source.next()
+                    if item is not None:
+                        await self._emit_qr(item)
+                        next_rotation = time.monotonic() + item.ttl
+                continue
+
+            if child(node, "pair-success") is not None:
+                await self._complete_pairing(transport, node, state, store)
+                state.paired = True
+                # Stay on the connection: the server finalises the device and then
+                # sends the 515 restart. Closing earlier can abort the registration.
+                continue
+
+            if node.tag == "success":
+                await self._store_me(store, state)
+                await self._ensure_prekeys(transport, state, store)
+                if self._on_connected is not None:
+                    await self._on_connected(transport, state)
+                return "connected"
+            if node.tag == "failure":
+                reason = _reason_code(node)
+                if state.paired and reason in STREAM_ERROR_LOGGED_OUT | {405}:
+                    # The device was never activated. Re-pairing automatically would
+                    # burn pairing refs and spam QR codes, so stop and say so: the
+                    # account is dropped here, the next run starts from a fresh QR.
+                    await self._forget_me(store, state)
+                    raise SessionError(
+                        "device is not activated on the server "
+                        f"(reason {reason}). The session was reset; run pairing again "
+                        "once WhatsApp stops rate-limiting device linking."
+                    )
+                raise SessionError(f"connection refused: {node.attrs} (paired={state.paired})")
+
+    async def _ensure_prekeys(
+        self, transport: Transport, state: SessionState, store: SessionStore
+    ) -> None:
+        """Publish one-time prekeys so other devices can start a session with us."""
+        available = await store.count_available_prekeys()
+        if available > MIN_PREKEY_COUNT:
+            return
+        pending = await store.pending_prekeys()
+        missing = INITIAL_PREKEY_COUNT - available - len(pending)
+        if missing > 0:
+            start = (await store.max_prekey_id() or 0) + 1
+            batch = [
+                (start + offset, pack_key_pair(kp.private, kp.public))
+                for offset, kp in enumerate(generate_keypair() for _ in range(missing))
+            ]
+            await store.add_prekeys(batch)
+            pending = await store.pending_prekeys()
+        if not pending:
+            return
+        node = build_upload_node(
+            state.credentials,
+            [(key_id, unpack_public(blob)) for key_id, blob in prekeys_to_upload(pending)],
+            new_message_id(),
+        )
+        response = await self._query(transport, node)
+        if response.attrs.get("type") == "error":
+            raise SessionError(f"prekey upload rejected: {response.attrs}")
+        await store.mark_prekeys_uploaded([key_id for key_id, _blob in pending])
+
+    async def _query(self, transport: Transport, node: Node, *, timeout: float = 30.0) -> Node:
+        message_id = node.attrs.get("id")
+        if not message_id:
+            raise SessionError("query node has no id")
+        await transport.send_encrypted(encode_node(node))
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SessionError(f"no response to {node.attrs.get('xmlns')} query")
+            frame = await asyncio.wait_for(transport.recv_encrypted(), timeout=remaining)
+            response = decode_node(frame)
+            if response.tag == "iq" and response.attrs.get("id") == message_id:
+                return response
+
+    async def _store_me(self, store: SessionStore, state: SessionState) -> None:
+        if not state.jid:
+            return
+        stored = state.credentials.to_dict()
+        stored["me"] = {"id": state.jid, "lid": state.lid}
+        await store.save_creds(stored)
+
+    async def _forget_me(self, store: SessionStore, state: SessionState) -> None:
+        state.paired = False
+        state.jid = None
+        state.lid = None
+        await store.save_creds(state.credentials.to_dict())
+
+    async def _send(self, transport: Transport, node: Node) -> None:
+        if self._sent_observer is not None:
+            self._sent_observer(node)
+        await transport.send_encrypted(encode_node(node))
+
+    async def _ack(self, transport: Transport, node: Node) -> None:
+        await self._send(
+            transport,
+            Node(
+                tag="iq",
+                attrs={"to": S_WHATSAPP_NET, "type": "result", "id": node.attrs.get("id", "")},
+            ),
+        )
+
+    @staticmethod
+    def _read_refs(pair_device: Node) -> list[str]:
+        refs: list[str] = []
+        for ref_node in children(pair_device, "ref"):
+            content = ref_node.content
+            refs.append(content.decode() if isinstance(content, bytes) else str(content))
+        return refs
+
+    async def _emit_qr(self, item: PairingQr) -> None:
+        if self._qr_callback is None:
+            return
+        result = self._qr_callback(item)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def _complete_pairing(
+        self, transport: Transport, node: Node, state: SessionState, store: SessionStore
+    ) -> None:
+        pair: PairSuccess = parse_pair_success(node, message_id=node.attrs.get("id", ""))
+        identity, key_index = verify_pair_success(pair, state.credentials)
+        reply = build_pair_device_sign_reply(node.attrs["id"], identity, key_index=key_index)
+        await self._send(transport, reply)
+        # Kept for every later prekey message: recipients use it to verify the
+        # device that started the session.
+        state.credentials = replace(
+            state.credentials, device_identity=encode_account_identity(identity)
+        )
+        await store.save_creds(state.credentials.to_dict())
+        await self._send(transport, build_unified_session_node(unified_session_id()))
+        state.jid = pair.jid
+        state.lid = pair.lid
+        state.paired = True
+        # `me` is written only after the server accepts the login: saving it here
+        # would make every later run try to log in even if registration failed.

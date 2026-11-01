@@ -4,8 +4,8 @@ import hmac
 
 import pytest
 
-from wapy.messaging.appstate import AppStateSync, AppStateSyncError
-from wapy.protocol.appstate import (
+from aiowapy.messaging.appstate import AppStateSync, AppStateSyncError
+from aiowapy.protocol.appstate import (
     LTHASH_SIZE,
     MUTATION_REMOVE,
     MUTATION_SET,
@@ -26,8 +26,8 @@ from wapy.protocol.appstate import (
     read_action,
     snapshot_mac,
 )
-from wapy.protocol.wabinary import Node
-from wapy.store import SessionStore
+from aiowapy.protocol.wabinary import Node
+from aiowapy.store import SessionStore
 
 KEY_ID = b"\x01\x02\x03\x04"
 KEY_DATA = bytes(range(32))

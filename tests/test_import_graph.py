@@ -5,38 +5,44 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "wapy"
+SRC = Path(__file__).resolve().parents[1] / "src" / "aiowapy"
 
 # Key is a top-level package; value holds prefixes it must not import.
 LAYER_RULES: dict[str, set[str]] = {
     "protocol": {
-        "wapy.events",
-        "wapy.router",
-        "wapy.store",
-        "wapy.client",
-        "wapy.stream",
+        "aiowapy.events",
+        "aiowapy.router",
+        "aiowapy.store",
+        "aiowapy.client",
+        "aiowapy.stream",
     },
     "crypto": {
-        "wapy.models",
-        "wapy.events",
-        "wapy.router",
-        "wapy.store",
-        "wapy.client",
-        "wapy.stream",
+        "aiowapy.models",
+        "aiowapy.events",
+        "aiowapy.router",
+        "aiowapy.store",
+        "aiowapy.client",
+        "aiowapy.stream",
     },
     "models": {
-        "wapy.protocol",
-        "wapy.crypto",
-        "wapy.store",
-        "wapy.client",
-        "wapy.router",
-        "wapy.stream",
-        "wapy.events",
+        "aiowapy.protocol",
+        "aiowapy.crypto",
+        "aiowapy.store",
+        "aiowapy.client",
+        "aiowapy.router",
+        "aiowapy.stream",
+        "aiowapy.events",
     },
-    "router": {"wapy.protocol", "wapy.crypto", "wapy.store", "wapy.client"},
-    "store": {"wapy.client", "wapy.router", "wapy.events", "wapy.models", "wapy.stream"},
+    "router": {"aiowapy.protocol", "aiowapy.crypto", "aiowapy.store", "aiowapy.client"},
+    "store": {
+        "aiowapy.client",
+        "aiowapy.router",
+        "aiowapy.events",
+        "aiowapy.models",
+        "aiowapy.stream",
+    },
     # events carry protocol-level types (MediaInfo, Node) by design.
-    "events": {"wapy.crypto", "wapy.store", "wapy.client", "wapy.router"},
+    "events": {"aiowapy.crypto", "aiowapy.store", "aiowapy.client", "aiowapy.router"},
 }
 
 
